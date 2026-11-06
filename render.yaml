@@ -1,4 +1,4 @@
-# Render Blueprint for 掌心窗公开版 v0.3.8.2
+# Render Blueprint for 掌心窗安全只读版 v0.4.0
 # 一键部署会创建两个服务：手机端后端 server + MCP 服务。
 # 部署后：
 # - 手机 App 填 zhangxinchuang-server 的外部地址。
@@ -23,7 +23,7 @@ services:
     runtime: python
     plan: free
     rootDir: server
-    buildCommand: echo ok
+    buildCommand: python -m unittest discover -s tests -v
     startCommand: python linjian_server.py
     envVars:
       - fromGroup: zhangxinchuang-public-shared
@@ -37,7 +37,7 @@ services:
     runtime: node
     plan: free
     rootDir: mcp
-    buildCommand: npm install
+    buildCommand: npm ci && npm test
     startCommand: npm start
     envVars:
       - fromGroup: zhangxinchuang-public-shared
@@ -48,3 +48,18 @@ services:
           type: web
           name: zhangxinchuang-server
           envVarKey: RENDER_EXTERNAL_URL
+      # ChatGPT 用户认证与手机同步 Token 完全分离。
+      # 首次 Blueprint 确认页会要求填写 Auth0/其他 OAuth 2.1 提供方的 issuer。
+      - key: MCP_OAUTH_ISSUER
+        sync: false
+      # 默认以 Render 自动提供的本服务公网 URL 作为 OAuth audience/resource。
+      - key: MCP_OAUTH_READ_SCOPE
+        value: phone.read
+      - key: MCP_OAUTH_CONTROL_SCOPE
+        value: phone.control
+      # 安全默认值：只注册手机状态与应用时长工具。
+      - key: MCP_ENABLE_SENSITIVE_TOOLS
+        value: "false"
+      - key: MCP_ENABLE_WALLET_TOOLS
+        value: "false"
+

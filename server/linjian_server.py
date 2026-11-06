@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import calendar
+import hmac
 import json
 import os
 import subprocess
@@ -420,9 +421,9 @@ class Handler(BaseHTTPRequestHandler):
         self._send_bytes(code, json.dumps(payload, ensure_ascii=False).encode("utf-8"), "application/json; charset=utf-8")
 
     def _token_ok(self) -> bool:
-        qs = parse_qs(urlparse(self.path).query)
-        supplied = self.headers.get("X-Auth-Token", "") or qs.get("token", [""])[0]
-        return bool(self.state.token) and supplied == self.state.token
+        # 手机同步密钥只接受请求头，避免 query string 把 Token 泄露进代理、浏览器历史或访问日志。
+        supplied = self.headers.get("X-Auth-Token", "")
+        return bool(self.state.token) and bool(supplied) and hmac.compare_digest(supplied, self.state.token)
 
     def _require_token(self) -> bool:
         if self._token_ok(): return True
@@ -449,7 +450,10 @@ class Handler(BaseHTTPRequestHandler):
         path = parsed.path
         qs = parse_qs(parsed.query)
         if path in ("/", "/health"):
-            self._json(200, {"ok": True, "service": "linjian-public", "name": "掌心窗", "version": VERSION, "tools": sorted(ALLOWED_ACTIONS), "guidian": True, "calendar": True, "diary": True, "diary_storage": "phone_local", "app_gate": True, "focus_tools": True, "diary_rename_fix": True, "diary_write_fallback": True, "diary_annotation_tools": True, "diary_annotation_whitelist_fix": True})
+            self._json(200, {"ok": True, "service": "linjian-phone-backend", "name": "掌心窗", "version": VERSION, "token_required_for_api": True})
+            return
+        # 所有 /api/* 入口统一先验证手机同步 Token，防止新增路由漏掉单独检查。
+        if path.startswith("/api/") and not self._require_token():
             return
         if path in ("/mcp", "/sse"):
             self._json(400, {"ok": False, "error": "LINJIAN_ERR_WRONG_SERVICE", "message": "你访问的是掌心窗 server 服务，不是 MCP 服务。请单独部署 mcp 目录，并在 MCP 客户端填写 MCP 服务域名 + /mcp 或 /sse。"})
@@ -522,6 +526,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         path = urlparse(self.path).path
+        # POST API 同样采用统一入口校验；OAuth 只存在于独立 MCP 服务，不与手机 Token 混用。
+        if path.startswith("/api/") and not self._require_token():
+            return
         if path in ("/mcp", "/sse"):
             self._json(400, {"ok": False, "error": "LINJIAN_ERR_WRONG_SERVICE", "message": "你访问的是掌心窗 server 服务，不是 MCP 服务。请单独部署 mcp 目录，并在 MCP 客户端填写 MCP 服务域名 + /mcp 或 /sse。"})
             return
@@ -663,3 +670,4 @@ def main() -> None:
     except KeyboardInterrupt: print("\nbye.")
 
 if __name__ == "__main__": main()
+
