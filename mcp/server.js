@@ -3,6 +3,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 import { z } from "zod";
+import { createRemoteJWKSet, jwtVerify } from "jose";
 import fs from "fs";
 import path from "path";
 
@@ -50,6 +51,86 @@ function effectiveLinjianUrl() {
 }
 const LINJIAN_TOKEN = process.env.LINJIAN_TOKEN || "";
 const DEFAULT_DEVICE = process.env.LINJIAN_DEFAULT_DEVICE || "android-phone";
+
+const MCP_PUBLIC_BASE_URL = normalizeBaseUrl(process.env.MCP_PUBLIC_BASE_URL || process.env.RENDER_EXTERNAL_URL || "");
+const MCP_OAUTH_ISSUER = (process.env.MCP_OAUTH_ISSUER || "").trim();
+const MCP_OAUTH_AUDIENCE = normalizeBaseUrl(process.env.MCP_OAUTH_AUDIENCE || MCP_PUBLIC_BASE_URL);
+const MCP_OAUTH_JWKS_URI = (process.env.MCP_OAUTH_JWKS_URI || "").trim();
+const MCP_READ_SCOPE = (process.env.MCP_OAUTH_READ_SCOPE || "phone.read").trim();
+const MCP_CONTROL_SCOPE = (process.env.MCP_OAUTH_CONTROL_SCOPE || "phone.control").trim();
+const MCP_ENABLE_SENSITIVE_TOOLS = /^true$/i.test(process.env.MCP_ENABLE_SENSITIVE_TOOLS || "false");
+const MCP_ENABLE_WALLET_TOOLS = /^true$/i.test(process.env.MCP_ENABLE_WALLET_TOOLS || "false");
+const MCP_ALLOWED_SUBJECTS = new Set(
+  (process.env.MCP_ALLOWED_SUBJECTS || "").split(",").map((v) => v.trim()).filter(Boolean)
+);
+
+function oauthConfigured() {
+  return Boolean(MCP_PUBLIC_BASE_URL && MCP_OAUTH_ISSUER && MCP_OAUTH_AUDIENCE);
+}
+
+function protectedResourceMetadataUrl(req) {
+  const base = MCP_PUBLIC_BASE_URL || `${req.protocol}://${req.get("host")}`;
+  return `${base}/.well-known/oauth-protected-resource`;
+}
+
+let remoteJwks = null;
+function oauthJwks() {
+  if (remoteJwks) return remoteJwks;
+  if (!MCP_OAUTH_ISSUER) throw new Error("MCP_OAUTH_ISSUER is not configured");
+  const jwksUrl = MCP_OAUTH_JWKS_URI || new URL(".well-known/jwks.json", MCP_OAUTH_ISSUER).toString();
+  remoteJwks = createRemoteJWKSet(new URL(jwksUrl));
+  return remoteJwks;
+}
+
+function tokenScopes(payload = {}) {
+  const raw = payload.scope || payload.scp || [];
+  const list = Array.isArray(raw) ? raw : String(raw || "").split(/\s+/);
+  return new Set(list.map(String).filter(Boolean));
+}
+
+function bearerToken(req) {
+  const match = String(req.headers.authorization || "").match(/^Bearer\s+(.+)$/i);
+  return match ? match[1].trim() : "";
+}
+
+function sendOAuthChallenge(req, res, scope, status = 401, error = "invalid_token", description = "OAuth access token required") {
+  const metadata = protectedResourceMetadataUrl(req);
+  res.setHeader("WWW-Authenticate", `Bearer resource_metadata="${metadata}", scope="${scope}", error="${error}", error_description="${description}"`);
+  return res.status(status).json({ ok: false, error, error_description: description });
+}
+
+function requireOAuth(scope) {
+  return async (req, res, next) => {
+    if (!oauthConfigured()) {
+      return res.status(503).json({
+        ok: false,
+        error: "oauth_not_configured",
+        message: "MCP OAuth is not configured. Set MCP_OAUTH_ISSUER and ensure MCP_PUBLIC_BASE_URL or RENDER_EXTERNAL_URL is available."
+      });
+    }
+    const token = bearerToken(req);
+    if (!token) return sendOAuthChallenge(req, res, scope);
+    try {
+      const { payload, protectedHeader } = await jwtVerify(token, oauthJwks(), {
+        issuer: MCP_OAUTH_ISSUER,
+        audience: MCP_OAUTH_AUDIENCE,
+        algorithms: ["RS256", "ES256"]
+      });
+      const scopes = tokenScopes(payload);
+      if (!scopes.has(scope)) {
+        return sendOAuthChallenge(req, res, scope, 403, "insufficient_scope", `Required scope: ${scope}`);
+      }
+      if (MCP_ALLOWED_SUBJECTS.size && !MCP_ALLOWED_SUBJECTS.has(String(payload.sub || ""))) {
+        return res.status(403).json({ ok: false, error: "subject_not_allowed" });
+      }
+      req.auth = { sub: String(payload.sub || ""), scopes, claims: payload, protectedHeader };
+      next();
+    } catch (error) {
+      console.warn("OAuth verification failed:", error?.code || error?.message || "invalid token");
+      return sendOAuthChallenge(req, res, scope, 401, "invalid_token", "Token verification failed");
+    }
+  };
+}
 
 // v0.3.6.6：公开 MCP 经常被平台限制在 20 秒内返回。
 // 状态读取、活动记录和命令轮询都要快速失败，避免整条工具链被 Render 冷启动、网络抖动或手机端确认弹窗拖到超时。
@@ -2175,6 +2256,103 @@ function makeServer() {
   return server;
 }
 
+function safePhoneState(data, deviceId) {
+  const state = data?.life_state || data?.state || {};
+  return {
+    ok: true,
+    device_id: data?.device_id || deviceId,
+    updated_at: state.updated_at || data?.updated_at || "",
+    battery_percent: state.battery_percent,
+    charging: state.charging,
+    charging_type: state.charging_type,
+    network_type: state.network_type,
+    screen_on: state.screen_on,
+    current_app: state.current_app,
+    current_package: state.current_package,
+    accessibility_ready: state.accessibility_ready,
+    usage_permission_ready: state.usage_permission_ready,
+    screen_time_today_minutes: state.screen_time_today_minutes,
+    unlock_count_today: state.unlock_count_today,
+    last_unlock_at: state.last_unlock_at,
+    top_apps_today: Array.isArray(state.top_apps_today) ? state.top_apps_today : []
+  };
+}
+
+function makeReadOnlyServer(principal = {}) {
+  const server = new McpServer(
+    { name: "linjian-readonly", version: "0.4.0-security" },
+    { instructions: "Read-only phone status and Android app usage. Screenshot, click, input, notifications, wallet and remote-control tools are disabled." }
+  );
+  const securitySchemes = [{ type: "oauth2", scopes: [MCP_READ_SCOPE] }];
+  const meta = { securitySchemes };
+
+  server.registerTool("get_phone_state", {
+    title: "读取手机状态",
+    description: "只读获取电量、充电、网络、亮屏、当前应用和权限状态；不截图、不读取屏幕文字、不执行手机操作。",
+    inputSchema: { device_id: z.string().default(DEFAULT_DEVICE) },
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+    _meta: meta
+  }, async ({ device_id = DEFAULT_DEVICE }) => {
+    const response = await linjianFetch(`/api/device/state?device_id=${encodeURIComponent(device_id)}`, { timeout_ms: QUICK_FETCH_TIMEOUT_MS });
+    const data = await response.json();
+    return textResult(safePhoneState(data, device_id), !response.ok);
+  });
+
+  server.registerTool("get_app_usage", {
+    title: "读取应用使用时长",
+    description: "只读获取今日屏幕时长、解锁次数和应用使用时长排行；不截图、不读取屏幕文字、不执行手机操作。",
+    inputSchema: { device_id: z.string().default(DEFAULT_DEVICE) },
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+    _meta: meta
+  }, async ({ device_id = DEFAULT_DEVICE }) => {
+    const response = await linjianFetch(`/api/life_state?device_id=${encodeURIComponent(device_id)}`, { timeout_ms: QUICK_FETCH_TIMEOUT_MS });
+    const data = await response.json();
+    const safe = safePhoneState(data, device_id);
+    const usage = {
+      ok: safe.ok,
+      device_id: safe.device_id,
+      usage_permission_ready: safe.usage_permission_ready,
+      screen_time_today_minutes: safe.screen_time_today_minutes,
+      unlock_count_today: safe.unlock_count_today,
+      last_unlock_at: safe.last_unlock_at,
+      current_app: safe.current_app,
+      current_package: safe.current_package,
+      top_apps_today: safe.top_apps_today,
+      updated_at: safe.updated_at
+    };
+    return textResult(usage, !response.ok);
+  });
+
+  server.registerTool("get_profile", {
+    title: "当前连接身份",
+    description: "返回当前 OAuth 凭据所代表的稳定身份。",
+    inputSchema: {},
+    outputSchema: {
+      id: z.string().min(1),
+      name: z.string().optional(),
+      email: z.string().optional(),
+      nickname: z.string().optional()
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+    _meta: { ...meta, "openai/profile": true }
+  }, async () => {
+    const profile = {
+      id: String(principal.sub || "authenticated-user"),
+      ...(principal.claims?.name ? { name: String(principal.claims.name) } : {}),
+      ...(principal.claims?.email ? { email: String(principal.claims.email) } : {}),
+      ...(principal.claims?.nickname ? { nickname: String(principal.claims.nickname) } : {})
+    };
+    return { content: [{ type: "text", text: JSON.stringify(profile) }], structuredContent: profile };
+  });
+
+  return server;
+}
+
+function serverForRequest(req) {
+  if (MCP_ENABLE_SENSITIVE_TOOLS && req.auth?.scopes?.has(MCP_CONTROL_SCOPE)) return makeServer();
+  return makeReadOnlyServer(req.auth || {});
+}
+
 const app = express();
 
 app.use((req, res, next) => {
@@ -2206,33 +2384,26 @@ app.use((req, res, next) => {
   next();
 });
 
-app.use(express.json({ limit: "32mb" }));
+app.use(express.json({ limit: "2mb" }));
+app.get("/.well-known/oauth-protected-resource", (req, res) => {
+  const resource = MCP_OAUTH_AUDIENCE || MCP_PUBLIC_BASE_URL || `${req.protocol}://${req.get("host")}`;
+  res.setHeader("Cache-Control", "public, max-age=300");
+  res.json({
+    resource,
+    authorization_servers: MCP_OAUTH_ISSUER ? [MCP_OAUTH_ISSUER] : [],
+    scopes_supported: [MCP_READ_SCOPE, MCP_CONTROL_SCOPE],
+    resource_documentation: "https://github.com/chen060318-dev/linjian-peek-public/blob/main/docs/chatgpt-oauth.md"
+  });
+});
 app.get("/", (_req, res) => res.type("text/plain").send("掌心窗 unified MCP is running. Use /mcp for Streamable HTTP, or /sse for SSE."));
 app.get("/health", (_req, res) => res.json({
   ok: true,
   service: "linjian-public-mcp",
-  version: "0.3.9.0",
-  has_url: Boolean(LINJIAN_URL_CANDIDATES.length),
-  has_token: Boolean(LINJIAN_TOKEN),
-  configured_linjian_url: RAW_LINJIAN_URL || "",
-  effective_linjian_url: effectiveLinjianUrl(),
-  fallback_linjian_urls: LINJIAN_URL_CANDIDATES.filter((u) => u !== RAW_LINJIAN_URL),
-  guardian_day_tools: true,
-  diary_tools: true,
-  diary_rename_fix: true,
-  diary_write_fallback: true,
-  diary_storage: "phone_local",
-  diary_annotation_tools: true,
-  diary_annotation_ui: "margin_notes",
-  focus_tools: true,
-  focus_tool_names: ["get_focus_status", "start_focus_mode", "end_focus_mode", "set_focus_plan", "reply_focus_request", "approve_focus_unlock", "deny_focus_unlock"],
-  mcp_wallet_endpoint: "/mcp-wallet",
-  schema_exposure_fix: true,
-  focus_schema_exposure_fix: true,
-  priority_tool: "wallet_takeout_action",
-  wallet_takeout_tool_count: WALLET_TAKEOUT_ACTIONS.size,
-  wallet_takeout_tools: Array.from(WALLET_TAKEOUT_ACTIONS),
-  stability_note: "v0.3.9.0 同步公开版版本信息；普通 /mcp 提前注册统一入口，新增 /mcp-wallet 专用端点，并把专注模式工具前置注册，兼容部分客户端不暴露新增工具的问题。"
+  version: "0.4.0-security",
+  oauth_configured: oauthConfigured(),
+  read_only_mode: !MCP_ENABLE_SENSITIVE_TOOLS,
+  wallet_tools_enabled: MCP_ENABLE_WALLET_TOOLS,
+  phone_backend_configured: Boolean(LINJIAN_URL_CANDIDATES.length && LINJIAN_TOKEN)
 }));
 
 // Some third-party MCP clients send non-standard experimental capability flags during
@@ -2256,9 +2427,9 @@ function sanitizeMcpRequestBody(body) {
   return sanitizeMcpInitializeMessage(body);
 }
 
-app.post("/mcp", async (req, res) => {
+app.post("/mcp", requireOAuth(MCP_READ_SCOPE), async (req, res) => {
   try {
-    const server = makeServer();
+    const server = serverForRequest(req);
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     const body = sanitizeMcpRequestBody(req.body);
     res.on("close", () => transport.close());
@@ -2266,11 +2437,15 @@ app.post("/mcp", async (req, res) => {
     await transport.handleRequest(req, res, body);
   } catch (err) {
     console.error(err);
-    if (!res.headersSent) res.status(500).json({ jsonrpc: "2.0", error: { code: -32603, message: String(err?.message || err) }, id: null });
+    if (!res.headersSent) res.status(500).json({ jsonrpc: "2.0", error: { code: -32603, message: "Internal MCP error" }, id: null });
   }
 });
-app.get("/mcp", (_req, res) => res.status(405).json({ ok: false, error: "Use POST /mcp for Streamable HTTP MCP." }));
-app.post("/mcp-wallet", async (req, res) => {
+app.get("/mcp", requireOAuth(MCP_READ_SCOPE), (_req, res) => res.status(405).json({ ok: false, error: "Use POST /mcp for Streamable HTTP MCP." }));
+
+app.post("/mcp-wallet", requireOAuth(MCP_CONTROL_SCOPE), async (req, res) => {
+  if (!MCP_ENABLE_SENSITIVE_TOOLS || !MCP_ENABLE_WALLET_TOOLS) {
+    return res.status(404).json({ ok: false, error: "wallet_tools_disabled" });
+  }
   try {
     const server = makeWalletTakeoutServer();
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
@@ -2280,18 +2455,37 @@ app.post("/mcp-wallet", async (req, res) => {
     await transport.handleRequest(req, res, body);
   } catch (err) {
     console.error(err);
-    if (!res.headersSent) res.status(500).json({ jsonrpc: "2.0", error: { code: -32603, message: String(err?.message || err) }, id: null });
+    if (!res.headersSent) res.status(500).json({ jsonrpc: "2.0", error: { code: -32603, message: "Internal MCP error" }, id: null });
   }
 });
-app.get("/mcp-wallet", (_req, res) => res.status(405).json({ ok: false, error: "Use POST /mcp-wallet for wallet/takeout Streamable HTTP MCP.", endpoint: "/mcp-wallet" }));
+app.get("/mcp-wallet", requireOAuth(MCP_CONTROL_SCOPE), (_req, res) => res.status(405).json({ ok: false, error: "Use POST /mcp-wallet." }));
+
 const sseTransports = new Map();
-app.get("/sse", async (_req, res) => {
-  try { const transport = new SSEServerTransport("/messages", res); sseTransports.set(transport.sessionId, transport); res.on("close", () => { sseTransports.delete(transport.sessionId); transport.close(); }); await makeServer().connect(transport); }
-  catch (err) { console.error(err); if (!res.headersSent) res.status(500).end(String(err?.message || err)); }
+app.get("/sse", requireOAuth(MCP_READ_SCOPE), async (req, res) => {
+  try {
+    const transport = new SSEServerTransport("/messages", res);
+    sseTransports.set(transport.sessionId, { transport, subject: req.auth.sub });
+    res.on("close", () => {
+      sseTransports.delete(transport.sessionId);
+      transport.close();
+    });
+    await serverForRequest(req).connect(transport);
+  } catch (err) {
+    console.error(err);
+    if (!res.headersSent) res.status(500).end("Internal SSE error");
+  }
 });
-app.post("/messages", async (req, res) => { const sessionId = req.query.sessionId; const transport = sseTransports.get(sessionId); if (!transport) return res.status(404).send("No SSE transport for sessionId"); await transport.handlePostMessage(req, res, req.body); });
+app.post("/messages", requireOAuth(MCP_READ_SCOPE), async (req, res) => {
+  const sessionId = req.query.sessionId;
+  const entry = sseTransports.get(sessionId);
+  if (!entry) return res.status(404).send("No SSE transport for sessionId");
+  if (entry.subject !== req.auth.sub) return res.status(403).json({ ok: false, error: "session_identity_mismatch" });
+  await entry.transport.handlePostMessage(req, res, req.body);
+});
+
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`掌心窗 unified MCP listening on 0.0.0.0:${PORT}`);
   console.log(`LINJIAN_URL=${RAW_LINJIAN_URL || "<missing>"}`);
   if (LINJIAN_URL_CANDIDATES.length > 1) console.log(`LINJIAN_URL fallback candidates=${LINJIAN_URL_CANDIDATES.join(", ")}`);
 });
+
