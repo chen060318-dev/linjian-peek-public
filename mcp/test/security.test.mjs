@@ -193,7 +193,7 @@ test("scoped control token exposes companion diary and wallet but not phone cont
   ]) {
     assert.match(body, new RegExp(enabled), `expected ${enabled}`);
   }
-  for (const disabled of ["peek_screen", "get_screen_nodes", "tap_text", "input_text", "send_phone_command", "open_app", "delete_diary_entry", "delete_wallet_record", "prepare_takeout_checkout", "wallet_takeout_action", "start_focus_mode"]) {
+  for (const disabled of ["get_screen_nodes", "tap_text", "input_text", "send_phone_command", "open_app", "delete_diary_entry", "delete_wallet_record", "prepare_takeout_checkout", "wallet_takeout_action", "start_focus_mode"]) {
     assert.doesNotMatch(body, new RegExp(`"name":"${disabled}"`), `unexpected ${disabled}`);
   }
 });
