@@ -59,7 +59,7 @@ const MCP_OAUTH_JWKS_URI = (process.env.MCP_OAUTH_JWKS_URI || "").trim();
 const MCP_READ_SCOPE = (process.env.MCP_OAUTH_READ_SCOPE || "phone.read").trim();
 const MCP_CONTROL_SCOPE = (process.env.MCP_OAUTH_CONTROL_SCOPE || "phone.control").trim();
 const MCP_ENABLE_SENSITIVE_TOOLS = /^true$/i.test(process.env.MCP_ENABLE_SENSITIVE_TOOLS || "false");
-// Limited everyday companion tools: does not enable screenshots, screen control, app locks, or checkout.
+// Limited everyday companion tools: enables explicitly allowlisted screenshots, reversible app locks, reminders, diary, and wallet approvals; it never enables arbitrary screen control or checkout.
 const MCP_ENABLE_COMPANION_TOOLS = /^true$/i.test(process.env.MCP_ENABLE_COMPANION_TOOLS || "false");
 const MCP_ENABLE_WALLET_TOOLS = /^true$/i.test(process.env.MCP_ENABLE_WALLET_TOOLS || "false");
 // When the limited companion mode is enabled, request both scopes during the initial
@@ -1137,10 +1137,15 @@ const COMPANION_ALLOWED_TOOLS = new Set([
   "list_wallet_request_results", "list_companion_wallet_requests", "get_wallet_rules",
   "submit_wallet_approval", "submit_companion_wallet_request", "decide_wallet_approval",
   "save_wallet_request_result", "save_user_wallet_request_result",
-  "get_guidian_state", "get_care_policy", "get_care_history",
+  "get_guidian_state", "trigger_guidian", "mark_guidian_returned", "set_guidian_config",
+  "get_care_policy", "get_care_history", "care_action",
   "get_last_visit", "get_visit_history", "get_visit_stats", "record_visit",
-  "get_weather_state", "get_senses_state", "get_life_state",
-  "send_notification"
+  "get_weather_state", "send_weather_notification", "get_senses_state", "get_life_state",
+  "send_notification", "set_alarm",
+  "peek_screen", "latest_screen", "linjian_status",
+  "get_screen_break_state", "screen_break_app", "temporary_screen_break_release",
+  "end_screen_break", "extend_screen_break", "deny_screen_break_release_request",
+  "list_screen_break_apps", "list_lockable_apps"
 ]);
 
 function makeServer({ allowedToolNames = null, principal = {} } = {}) {
