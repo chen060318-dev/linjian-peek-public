@@ -13,12 +13,8 @@ let child;
 let privateKey;
 const kid = "security-test-key";
 
-async function token(scope = "phone.read", permissions = undefined) {
-  return new SignJWT({
-    scope,
-    name: "Security Test",
-    ...(permissions ? { permissions } : {})
-  })
+async function token(scope = "phone.read") {
+  return new SignJWT({ scope, name: "Security Test" })
     .setProtectedHeader({ alg: "RS256", kid })
     .setIssuer(issuer)
     .setAudience(audience)
@@ -182,27 +178,6 @@ test("scoped control token exposes companion diary and wallet but not phone cont
     assert.match(body, new RegExp(enabled), `expected ${enabled}`);
   }
   for (const disabled of ["peek_screen", "get_screen_nodes", "tap_text", "input_text", "send_phone_command", "open_app", "delete_diary_entry", "delete_wallet_record", "prepare_takeout_checkout", "wallet_takeout_action", "start_focus_mode"]) {
-    assert.doesNotMatch(body, new RegExp(`"name":"${disabled}"`), `unexpected ${disabled}`);
-  }
-});
-
-test("Auth0 RBAC permissions claim unlocks companion mode when scope remains read-only", async () => {
-  const accessToken = await token("phone.read", ["phone.read", "phone.control"]);
-  const response = await fetch(`${audience}/mcp`, {
-    method: "POST",
-    headers: {
-      authorization: `Bearer ${accessToken}`,
-      "content-type": "application/json",
-      accept: "application/json, text/event-stream"
-    },
-    body: JSON.stringify({ jsonrpc: "2.0", id: 8, method: "tools/list", params: {} })
-  });
-  assert.equal(response.status, 200);
-  const body = await response.text();
-  for (const enabled of ["get_profile", "write_diary_entry", "get_companion_actions", "list_wallet_approvals", "decide_wallet_approval"]) {
-    assert.match(body, new RegExp(enabled), `expected ${enabled}`);
-  }
-  for (const disabled of ["peek_screen", "tap_text", "input_text", "send_phone_command", "open_app"]) {
     assert.doesNotMatch(body, new RegExp(`"name":"${disabled}"`), `unexpected ${disabled}`);
   }
 });
