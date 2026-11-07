@@ -136,7 +136,7 @@ public class MainActivity extends Activity {
         loadSettings();
         NowState.start(this);
 
-        DebugState.append(this, "掌心窗公开版 v0.3.9.3 已打开");
+        DebugState.append(this, "掌心窗公开版 v0.3.9.4 已打开");
         if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 13);
         serviceRunning = CompanionService.isPollingHealthy(this);
         updateUI();
@@ -2161,18 +2161,14 @@ public class MainActivity extends Activity {
             final int oldStatusColor = getWindow().getStatusBarColor();
             final int oldNavigationColor = getWindow().getNavigationBarColor();
             final int oldSystemUi = getWindow().getDecorView().getSystemUiVisibility();
-            getWindow().setStatusBarColor(Color.rgb(239, 244, 247));
-            getWindow().setNavigationBarColor(Color.rgb(239, 244, 247));
-            if (Build.VERSION.SDK_INT >= 26) {
-                getWindow().getDecorView().setSystemUiVisibility(oldSystemUi | View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR | View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR);
-            } else if (Build.VERSION.SDK_INT >= 23) {
-                getWindow().getDecorView().setSystemUiVisibility(oldSystemUi | View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR);
-            }
+            getWindow().setStatusBarColor(Color.rgb(4, 7, 10));
+            getWindow().setNavigationBarColor(Color.rgb(4, 7, 10));
+            getWindow().getDecorView().setSystemUiVisibility(oldSystemUi & ~View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR & ~View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR);
 
-            final RainSplashView[] splashRef = new RainSplashView[1];
-            RainSplashView splash = new RainSplashView(this, () -> {
+            final CosmicSplashView[] splashRef = new CosmicSplashView[1];
+            CosmicSplashView splash = new CosmicSplashView(this, () -> {
                 if (page != null) page.animate().alpha(1f).setDuration(460).start();
-                RainSplashView activeSplash = splashRef[0];
+                CosmicSplashView activeSplash = splashRef[0];
                 if (activeSplash == null) return;
                 activeSplash.animate().alpha(0f).setDuration(460).withEndAction(() -> {
                     content.removeView(activeSplash);
@@ -2493,7 +2489,7 @@ public class MainActivity extends Activity {
         getSharedPreferences(AppPrefs.PREFS, MODE_PRIVATE).edit().putBoolean("user_stopped", false).apply(); requestIgnoreBatteryOptimization();
         Intent intent = new Intent(this, CompanionService.class); intent.putExtra("server_url", url); intent.putExtra("token", token);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(intent); else startService(intent);
-        DebugState.append(this, "已请求启动前台服务：公开版 v0.3.9.3 后台轮询心跳与自动恢复已启用"); serviceRunning = true; updateUI();
+        DebugState.append(this, "已请求启动前台服务：公开版 v0.3.9.4 后台轮询心跳与自动恢复已启用"); serviceRunning = true; updateUI();
     }
 
     private void stopCompanionService() { getSharedPreferences(AppPrefs.PREFS, MODE_PRIVATE).edit().putBoolean("user_stopped", true).apply(); stopService(new Intent(this, CompanionService.class)); DebugState.append(this, "已停止服务"); serviceRunning = false; updateUI(); }
