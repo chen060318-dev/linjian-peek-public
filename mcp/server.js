@@ -2399,6 +2399,28 @@ function makeReadOnlyServer(principal = {}) {
     return { content: [{ type: "text", text: JSON.stringify(profile) }], structuredContent: profile };
   });
 
+  // Explicit OAuth scope upgrade: read-only tokens can discover this tool but
+  // it never writes to the phone. Only a new token with both scopes unlocks
+  // allowlisted companion tools on subsequent MCP requests.
+  server.registerTool("request_companion_access", {
+    title: "申请解锁掌心窗日记、小金库与行动记录",
+    description: "用户想用 Riven 的日记、小金库审批、行动等新功能时，申请更高的 phone.control OAuth 授权。不会自动执行手机操作。",
+    inputSchema: {},
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+    _meta: { securitySchemes: [{ type: "oauth2", scopes: [MCP_READ_SCOPE, MCP_CONTROL_SCOPE] }] }
+  }, async () => {
+    if (!MCP_ENABLE_COMPANION_TOOLS) {
+      return textResult({ ok: false, reason: "companion_tools_disabled", message: "请先启用 MCP_ENABLE_COMPANION_TOOLS。" }, true);
+    }
+    const metadataUrl = MCP_PUBLIC_BASE_URL + "/.well-known/oauth-protected-resource";
+    const challenge = `Bearer resource_metadata="${metadataUrl}", scope="${MCP_READ_SCOPE} ${MCP_CONTROL_SCOPE}", error="insufficient_scope", error_description="Please authorize companion features in ChatGPT"`;
+    return {
+      isError: true,
+      content: [{ type: "text", text: "当前只有 phone.read 读取权限。请在 ChatGPT 的授权弹窗中允许 phone.control，再刷新工具。" }],
+      _meta: { "mcp/www_authenticate": [challenge] }
+    };
+  });
+
   return server;
 }
 
