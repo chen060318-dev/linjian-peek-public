@@ -175,11 +175,13 @@ public class AppGate {
         if (!AppPrefs.isPackageLike(pkg)) return put(new JSONObject(), false, "package_invalid");
         if (isProtectedPackage(ctx, pkg)) return put(new JSONObject(), false, "protected_package:" + pkg);
         String appName = cmd.optString("appName", cmd.optString("app_name", cmd.optString("app", labelOf(ctx, pkg))));
-        long until = cmd.optLong("locked_until_ms", 0);
-        if (until <= 0) {
-            double minutes = commandMinutes(cmd, 30);
-            until = System.currentTimeMillis() + Math.round(minutes * 60000.0);
-        }
+        long now = System.currentTimeMillis();
+        long expiresAtMs = cmd.optLong("expires_at_ms", 0);
+        if (expiresAtMs > 0 && now >= expiresAtMs) return put(new JSONObject(), false, "command_expired_before_lock");
+        // 时长型门禁从手机真实执行时开始计时。仅在没有时长参数的旧版命令里，才兼容绝对截止时间。
+        double minutes = commandMinutes(cmd, 0);
+        long until = minutes > 0 ? now + Math.round(minutes * 60000.0) : cmd.optLong("locked_until_ms", 0);
+        if (until <= now) return put(new JSONObject(), false, "lock_deadline_already_expired");
         JSONObject lock = new JSONObject();
         lock.put("package", pkg);
         lock.put("app_name", appName.length() == 0 ? labelOf(ctx, pkg) : appName);
@@ -189,7 +191,8 @@ public class AppGate {
         lock.put("mode", normalizeMode(cmd.optString("mode", "medium")));
         lock.put("reason", cmd.optString("reason", "").trim());
         lock.put("message", cmd.optString("message", "").trim());
-        lock.put("created_at_ms", System.currentTimeMillis());
+        lock.put("created_at_ms", now);
+        lock.put("command_id", cmd.optString("id", ""));
         lock.put("emergency_unlock_minutes", Math.max(1, cmd.optInt("emergencyUnlockMinutes", cmd.optInt("emergency_unlock_minutes", 5))));
         String pass = cmd.optString("emergencyPassphrase", cmd.optString("emergency_passphrase", ""));
         if (pass.length() > 0) lock.put("emergency_hash", hash(pass));

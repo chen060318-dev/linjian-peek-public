@@ -27,9 +27,12 @@ from urllib.request import Request, urlopen
 DEFAULT_PORT = 8513
 DEFAULT_KEEP = 3
 MAX_UPLOAD_BYTES = 24 * 1024 * 1024
-VERSION = "0.3.9.0"
+VERSION = "0.3.9.1"
 DEFAULT_DEVICE = os.environ.get("LINJIAN_DEFAULT_DEVICE", "android-phone")
 ACTIVITY_EVENT_LIMIT = 500
+DEFAULT_COMMAND_TTL_SECONDS = int(os.environ.get("LINJIAN_COMMAND_TTL_SECONDS", "300"))
+COMMAND_DISPATCH_LEASE_SECONDS = int(os.environ.get("LINJIAN_COMMAND_DISPATCH_LEASE_SECONDS", "45"))
+COMMAND_MAX_DISPATCH_ATTEMPTS = int(os.environ.get("LINJIAN_COMMAND_MAX_DISPATCH_ATTEMPTS", "3"))
 
 ERR_BAD_TOKEN = "LINJIAN_ERR_BAD_TOKEN"
 ERR_NO_IMAGE = "LINJIAN_ERR_NO_IMAGE"
@@ -379,7 +382,11 @@ def make_command(device_id: str, action: str, app: str = "", package: str = "", 
     if package in SENSITIVE_PACKAGES:
         action = "noop"
         payload["blocked_reason"] = "sensitive_package"
+    created_ms = int(time.time() * 1000)
+    ttl_seconds = max(15, min(3600, int(payload.get("ttl_seconds") or DEFAULT_COMMAND_TTL_SECONDS)))
+    expires_at_ms = int(payload.get("expires_at_ms") or (created_ms + ttl_seconds * 1000))
     cmd = {
+        **payload,
         "id": str(uuid.uuid4()),
         "device_id": device_id or DEFAULT_DEVICE,
         "action": action,
@@ -388,11 +395,18 @@ def make_command(device_id: str, action: str, app: str = "", package: str = "", 
         "payload": payload,
         "status": "pending",
         "created_at": now_iso(),
+        "queued_at": now_iso(),
+        "expires_at_ms": expires_at_ms,
+        "ttl_seconds": ttl_seconds,
+        "dispatch_attempts": 0,
         "dispatched_at": None,
+        "phone_received_at": None,
+        "execution_started_at": None,
+        "execution_completed_at": None,
+        "result_uploaded_at": None,
         "completed_at": None,
         "result": "",
     }
-    cmd.update(payload)
     return cmd
 
 
@@ -480,13 +494,40 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/poll":
             if not self._require_token(): return
             device_id = qs.get("device_id", [DEFAULT_DEVICE])[0] or DEFAULT_DEVICE
+            expired = []
             with self.state.commands_lock:
-                idx = next((i for i, c in enumerate(self.state.commands) if c.get("device_id") == device_id and c.get("status") == "pending"), None)
-                if idx is None:
-                    self._json(200, {"ok": True, "command": None}); return
-                cmd = self.state.commands.pop(idx)
-                cmd["status"] = "dispatched"; cmd["dispatched_at"] = now_iso()
-                self.state.command_history[cmd.get("id", "")] = dict(cmd)
+                now_ms = int(time.time() * 1000)
+                for queued in list(self.state.commands):
+                    if queued.get("device_id") != device_id or queued.get("status") in ("completed", "failed", "expired"):
+                        continue
+                    if int(queued.get("expires_at_ms") or 0) > 0 and now_ms >= int(queued.get("expires_at_ms") or 0):
+                        queued["status"] = "expired"
+                        queued["completed_at"] = now_iso()
+                        queued["result"] = "command_expired_before_phone_execution"
+                        self.state.command_history[queued.get("id", "")] = dict(queued)
+                        self.state.commands.remove(queued)
+                        expired.append(dict(queued))
+                lease_before = time.time() - max(5, COMMAND_DISPATCH_LEASE_SECONDS)
+                idx = next((i for i, c in enumerate(self.state.commands)
+                            if c.get("device_id") == device_id
+                            and (c.get("status") == "pending"
+                                 or (c.get("status") == "dispatched"
+                                     and parse_iso_seconds(c.get("dispatched_at")) <= lease_before
+                                     and int(c.get("dispatch_attempts") or 0) < COMMAND_MAX_DISPATCH_ATTEMPTS))), None)
+                cmd = None
+                if idx is not None:
+                    cmd = self.state.commands[idx]
+                    cmd["status"] = "dispatched"; cmd["dispatched_at"] = now_iso()
+                    cmd["dispatch_attempts"] = int(cmd.get("dispatch_attempts") or 0) + 1
+                    self.state.command_history[cmd.get("id", "")] = dict(cmd)
+            for item in expired:
+                try:
+                    self.state.add_activity_event({
+                        "id": item.get("activity_event_id") or item.get("id"), "device_id": item.get("device_id") or device_id,
+                        "source": "companion", "type": activity_type_for_action(item.get("action")), "action": item.get("action") or "",
+                        "status": "expired", "metadata_json": {"command_id": item.get("id"), "result": item.get("result")}
+                    })
+                except Exception: pass
             self._json(200, {"ok": True, "command": cmd})
             return
         if path == "/api/latest.json":
@@ -498,6 +539,17 @@ class Handler(BaseHTTPRequestHandler):
             if not self._require_token(): return
             shot = self.state.latest_shot()
             if not shot: self._json(404, {"ok": False, "error": ERR_NOT_FOUND}); return
+            ctype = "image/png" if shot.suffix.lower() == ".png" else "image/jpeg"
+            self._send_bytes(200, shot.read_bytes(), ctype); return
+        if path == "/api/screenshot":
+            if not self._require_token(): return
+            command_id = qs.get("id", [""])[0].strip()
+            if not command_id:
+                self._json(400, {"ok": False, "error": "command_id_required"}); return
+            matches = sorted(self.state.shots_dir.glob(f"peek_*_{command_id}.*"), key=lambda p: p.stat().st_mtime)
+            if not matches:
+                self._json(404, {"ok": False, "error": ERR_NOT_FOUND, "command_id": command_id}); return
+            shot = matches[-1]
             ctype = "image/png" if shot.suffix.lower() == ".png" else "image/jpeg"
             self._send_bytes(200, shot.read_bytes(), ctype); return
         if path in ("/api/device/state", "/api/life_state"):
@@ -602,11 +654,32 @@ class Handler(BaseHTTPRequestHandler):
             with self.state.commands_lock:
                 cmd = self.state.command_history.get(cid)
                 if cmd is not None:
-                    cmd["status"] = "completed" if data.get("ok") else "failed"
-                    cmd["completed_at"] = now_iso()
-                    cmd["result"] = data.get("result", "")
-                    cmd["report"] = data
-                    completed_cmd = dict(cmd)
+                    requested_status = str(data.get("status") or "").strip().lower()
+                    allowed_statuses = {"received", "execution_started", "capturing", "uploading", "completed", "failed", "expired"}
+                    status = requested_status if requested_status in allowed_statuses else ("completed" if data.get("ok") else "failed")
+                    status_rank = {"pending": 0, "dispatched": 1, "received": 2, "execution_started": 3, "capturing": 3, "uploading": 4, "completed": 5, "failed": 5, "expired": 5}
+                    if (cmd.get("status") in ("completed", "failed", "expired") and status not in ("completed", "failed", "expired")) or status_rank.get(status, 0) < status_rank.get(cmd.get("status"), 0):
+                        completed_cmd = dict(cmd)
+                        status = cmd.get("status")
+                    else:
+                        stamp = now_iso()
+                        cmd["status"] = status
+                        if status == "received": cmd["phone_received_at"] = stamp
+                        if status in ("execution_started", "capturing"): cmd["execution_started_at"] = stamp
+                        if status == "uploading": cmd["uploading_at"] = stamp
+                        if status in ("completed", "failed", "expired"):
+                            cmd["execution_completed_at"] = stamp
+                            cmd["completed_at"] = stamp
+                        if "result" in data: cmd["result"] = data.get("result", "")
+                        cmd["report"] = data
+                        completed_cmd = dict(cmd)
+                        self.state.command_history[cid] = dict(cmd)
+                        for queued in self.state.commands:
+                            if queued.get("id") == cid:
+                                queued.update(cmd)
+                                break
+                        if status in ("completed", "failed", "expired"):
+                            self.state.commands = [item for item in self.state.commands if item.get("id") != cid]
             if completed_cmd is not None:
                 try:
                     self.state.add_activity_event({
@@ -640,8 +713,11 @@ class Handler(BaseHTTPRequestHandler):
         if length > MAX_UPLOAD_BYTES: self._json(413, {"ok": False, "error": ERR_TOO_LARGE}); return
         data = self.rfile.read(length)
         if len(data) < 100: self._json(400, {"ok": False, "error": ERR_NO_IMAGE}); return
+        command_id = (self.headers.get("X-Command-Id") or "").strip()
+        safe_command_id = "".join(ch for ch in command_id if ch.isalnum() or ch in "-_")[:100]
         ext = ".png" if data[:8] == b"\x89PNG\r\n\x1a\n" else ".jpg"
-        dest = self.state.shots_dir / f"peek_{int(time.time() * 1000)}{ext}"
+        suffix = f"_{safe_command_id}" if safe_command_id else ""
+        dest = self.state.shots_dir / f"peek_{int(time.time() * 1000)}{suffix}{ext}"
         dest.write_bytes(data)
         shots = sorted(self.state.shots_dir.glob("peek_*"), key=lambda p: p.stat().st_mtime)
         old_list = shots[:-self.state.keep] if self.state.keep > 0 else shots[:-1]
@@ -651,7 +727,31 @@ class Handler(BaseHTTPRequestHandler):
         if self.state.hook:
             try: subprocess.Popen([*self.state.hook.split(), str(dest.resolve())], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             except Exception as exc: self.log_message("hook failed: %s", exc)
-        self._json(200, {"ok": True, "filename": dest.name, "size": len(data)})
+        completed_cmd = None
+        if command_id:
+            with self.state.commands_lock:
+                cmd = self.state.command_history.get(command_id)
+                if cmd is not None:
+                    stamp = now_iso()
+                    cmd["status"] = "completed"
+                    cmd["execution_completed_at"] = stamp
+                    cmd["result_uploaded_at"] = stamp
+                    cmd["completed_at"] = stamp
+                    cmd["result"] = json.dumps({"screenshot_filename": dest.name, "size": len(data), "command_id": command_id}, ensure_ascii=False)
+                    cmd["screenshot_filename"] = dest.name
+                    self.state.command_history[command_id] = dict(cmd)
+                    self.state.commands = [item for item in self.state.commands if item.get("id") != command_id]
+                    completed_cmd = dict(cmd)
+            if completed_cmd is not None:
+                try:
+                    self.state.add_activity_event({
+                        "id": completed_cmd.get("activity_event_id") or command_id,
+                        "device_id": completed_cmd.get("device_id") or DEFAULT_DEVICE,
+                        "source": "companion", "type": "status_check", "action": "peek", "status": "completed",
+                        "metadata_json": {"command_id": command_id, "screenshot_filename": dest.name, "size": len(data)}
+                    })
+                except Exception: pass
+        self._json(200, {"ok": True, "filename": dest.name, "size": len(data), "command_id": command_id or None})
 
 
 def main() -> None:

@@ -808,11 +808,17 @@ async function linjianFetch(path, options = {}) {
 }
 
 async function postCommand(payload) {
+  const action = String(payload?.action || "noop").toLowerCase();
+  const timeSensitive = new Set(["peek", "screen_break_app", "lock_app", "get_screen_break_state", "get_lock_state"]);
+  const withLifecycle = {
+    ttl_seconds: payload?.ttl_seconds ?? (timeSensitive.has(action) ? 120 : 300),
+    ...payload
+  };
   const res = await linjianFetch("/api/command", {
     method: "POST",
     timeout_ms: COMMAND_QUEUE_TIMEOUT_MS,
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload)
+    body: JSON.stringify(withLifecycle)
   });
   return await res.json();
 }
@@ -884,7 +890,7 @@ async function waitCommand(id, seconds = DEFAULT_COMMAND_WAIT_SECONDS) {
     const remain = Math.max(500, Math.min(COMMAND_STATUS_TIMEOUT_MS, deadline - Date.now()));
     last = await commandStatus(id, remain).catch(() => last);
     const status = last?.command?.status;
-    if (status === "completed" || status === "failed") return last;
+    if (status === "completed" || status === "failed" || status === "expired") return last;
   }
   return last;
 }
@@ -900,6 +906,14 @@ async function latestMtime() {
 
 async function fetchLatestImage() {
   const res = await linjianFetch("/api/latest");
+  const mimeType = res.headers.get("content-type")?.split(";")[0] || "image/jpeg";
+  const ab = await res.arrayBuffer();
+  const buf = Buffer.from(ab);
+  return { mimeType, data: buf.toString("base64"), bytes: buf.byteLength };
+}
+
+async function fetchCommandImage(commandId) {
+  const res = await linjianFetch(`/api/screenshot?id=${encodeURIComponent(commandId)}`);
   const mimeType = res.headers.get("content-type")?.split(";")[0] || "image/jpeg";
   const ab = await res.arrayBuffer();
   const buf = Buffer.from(ab);
@@ -1319,21 +1333,27 @@ function makeServer({ allowedToolNames = null, principal = {} } = {}) {
     "向掌心窗手机端请求一张新截图，并等待手机上传后把图片返回。当用户提到页面、按钮、红点、报错弹窗、截图、看不清或“陪伴对象看看这里”时应主动使用；手机端必须已启动、无障碍截图权限已开启。",
     { wait_seconds: z.number().int().min(3).max(60).default(25).describe("等待手机上传新截图的秒数，默认 25。Render 免费实例刚醒时可以调大。") },
     async ({ wait_seconds = 25 }) => {
-      const before = await latestMtime();
-      await postCommand({ action: "peek", device_id: DEFAULT_DEVICE });
+      const queued = await postCommand({ action: "peek", device_id: DEFAULT_DEVICE, ttl_seconds: Math.max(60, wait_seconds + 30) });
+      const commandId = queued?.command?.id;
+      if (!commandId) return contentResult([{ type: "text", text: "截图命令创建失败：服务器没有返回 command_id。" }], true);
       const deadline = Date.now() + wait_seconds * 1000;
+      let observed = queued?.command || null;
       while (Date.now() < deadline) {
-        await new Promise((resolve) => setTimeout(resolve, 1000));
-        const info = await latestInfo().catch(() => null);
-        if (info && Number(info.mtime || 0) > before) {
-          const img = await fetchLatestImage();
+        await new Promise((resolve) => setTimeout(resolve, 700));
+        const statusResult = await commandStatus(commandId, Math.max(500, Math.min(COMMAND_STATUS_TIMEOUT_MS, deadline - Date.now()))).catch(() => null);
+        observed = statusResult?.command || observed;
+        if (observed?.status === "completed" && observed?.screenshot_filename) {
+          const img = await fetchCommandImage(commandId);
           return contentResult([
-            { type: "text", text: `掌心窗已收到新截图：${info.filename || "latest"}，大小约 ${info.size || img.bytes} bytes。` },
+            { type: "text", text: `掌心窗已收到本次请求的新截图：${observed.screenshot_filename}，大小约 ${img.bytes} bytes。` },
             { type: "image", data: img.data, mimeType: img.mimeType }
-          ], false, { ok: true, filename: info.filename || "latest", size: info.size || img.bytes, mtime: info.mtime || "", content_type: img.mimeType, source: "peek_screen" });
+          ], false, { ok: true, command_id: commandId, filename: observed.screenshot_filename, size: img.bytes, content_type: img.mimeType, source: "peek_screen", observed_status: observed });
+        }
+        if (["failed", "expired"].includes(observed?.status)) {
+          return contentResult([{ type: "text", text: `本次截图请求${observed.status === "expired" ? "已过期" : "执行失败"}：${observed.result || "手机端未返回详细原因"}` }], true, { ok: false, command_id: commandId, observed_status: observed });
         }
       }
-      return contentResult([{ type: "text", text: `等待 ${wait_seconds} 秒后还没有收到新截图。请检查：手机 App 是否点了启动、无障碍权限是否开启、服务器地址和 Token 是否一致、Render 是否刚从休眠中醒来。` }], true);
+      return contentResult([{ type: "text", text: `等待 ${wait_seconds} 秒后本次截图仍未完成，command_id=${commandId}，当前状态=${observed?.status || "pending"}。该请求会保留，可据此继续查询；不会拿旧截图冒充本次结果。` }], true, { ok: false, error: "screenshot_timeout", command_id: commandId, observed_status: observed });
     }
   );
 
@@ -2172,7 +2192,16 @@ function makeServer({ allowedToolNames = null, principal = {} } = {}) {
     const result = await postCommand(payload);
     const id = result?.command?.id;
     const observed = id && Number(wait_seconds || 0) > 0 ? await waitCommand(id, wait_seconds) : null;
-    return textResult({ queued: result, observed_status: observed?.command || null, note: "命令已排队；为避免平台 20 秒工具超时，未等到手机回传时会先返回。" });
+    const status = observed?.command?.status || result?.command?.status || "pending";
+    return textResult({
+      ok: status === "completed",
+      queued_ok: result?.ok === true || result?.queued === true,
+      command_id: id || null,
+      status,
+      queued: result,
+      observed_status: observed?.command || null,
+      note: status === "completed" ? "手机已真实执行并回传结果。" : status === "expired" ? "命令在手机执行前已经过期，未执行。" : "命令已排队；未等到手机真实回传时不会报告执行成功。"
+    }, status === "failed" || status === "expired");
   }
 
   server.tool("screen_break_app", "屏幕休息：让指定 App 暂停一段时间。适合小红书/抖音等容易一刷很久的入口；当用户刷太久、眼睛酸还想继续、说“我就不/不要你管/还没玩够/继续看”等嘴硬或拖延表达时可调用。必须有时长，到点自动恢复；语气是照顾和带回，不是惩罚。", {
@@ -2187,8 +2216,10 @@ function makeServer({ allowedToolNames = null, principal = {} } = {}) {
     device_id: z.string().default(DEFAULT_DEVICE),
     wait_seconds: z.number().int().min(3).max(20).default(8)
   }, async ({ app = "", package: pkg = "", duration_minutes = 30, mode = "medium", reason, message, emergency_passphrase = "", emergency_unlock_minutes = 5, device_id = DEFAULT_DEVICE, wait_seconds = 8 }) => {
-    const locked_until_ms = Date.now() + Math.round(duration_minutes * 60000);
-    const response = await gateCommand({ action: "screen_break_app", app, package: pkg, device_id, locked_until_ms, duration_minutes, mode, reason, message, emergency_passphrase, emergencyPassphrase: emergency_passphrase, emergency_unlock_minutes, emergencyUnlockMinutes: emergency_unlock_minutes, payload: { app, package: pkg, locked_until_ms, duration_minutes, mode, reason, message, emergency_passphrase, emergencyPassphrase: emergency_passphrase, emergency_unlock_minutes, emergencyUnlockMinutes: emergency_unlock_minutes } }, wait_seconds);
+    // 时长从手机真正开始执行时计算，避免离线/休眠后收到一个已经过期的绝对截止时间。
+    // ttl_seconds 只控制命令还能不能执行；它和门禁持续时长是两件事。
+    const ttl_seconds = 120;
+    const response = await gateCommand({ action: "screen_break_app", app, package: pkg, device_id, ttl_seconds, duration_minutes, mode, reason, message, emergency_passphrase, emergencyPassphrase: emergency_passphrase, emergency_unlock_minutes, emergencyUnlockMinutes: emergency_unlock_minutes, payload: { app, package: pkg, ttl_seconds, duration_minutes, mode, reason, message, emergency_passphrase, emergencyPassphrase: emergency_passphrase, emergency_unlock_minutes, emergencyUnlockMinutes: emergency_unlock_minutes } }, wait_seconds);
     await postCompanionAction("screen_break_app", { summary: `为${app || "指定应用"}安排了 ${duration_minutes} 分钟休息` });
     return response;
   });
@@ -2247,8 +2278,8 @@ function makeServer({ allowedToolNames = null, principal = {} } = {}) {
     device_id: z.string().default(DEFAULT_DEVICE),
     wait_seconds: z.number().int().min(3).max(20).default(8)
   }, async ({ app = "", package: pkg = "", duration_minutes = 30, mode = "medium", reason, message, emergency_passphrase = "", emergency_unlock_minutes = 5, device_id = DEFAULT_DEVICE, wait_seconds = 8 }) => {
-    const locked_until_ms = Date.now() + Math.round(duration_minutes * 60000);
-    const response = await gateCommand({ action: "lock_app", app, package: pkg, device_id, locked_until_ms, duration_minutes, mode, reason, message, emergency_passphrase, emergencyPassphrase: emergency_passphrase, emergency_unlock_minutes, emergencyUnlockMinutes: emergency_unlock_minutes, payload: { app, package: pkg, locked_until_ms, duration_minutes, mode, reason, message, emergency_passphrase, emergencyPassphrase: emergency_passphrase, emergency_unlock_minutes, emergencyUnlockMinutes: emergency_unlock_minutes } }, wait_seconds);
+    const ttl_seconds = 120;
+    const response = await gateCommand({ action: "lock_app", app, package: pkg, device_id, ttl_seconds, duration_minutes, mode, reason, message, emergency_passphrase, emergencyPassphrase: emergency_passphrase, emergency_unlock_minutes, emergencyUnlockMinutes: emergency_unlock_minutes, payload: { app, package: pkg, ttl_seconds, duration_minutes, mode, reason, message, emergency_passphrase, emergencyPassphrase: emergency_passphrase, emergency_unlock_minutes, emergencyUnlockMinutes: emergency_unlock_minutes } }, wait_seconds);
     await postCompanionAction("lock_app", { summary: `为${app || "指定应用"}安排了 ${duration_minutes} 分钟门禁` });
     return response;
   });

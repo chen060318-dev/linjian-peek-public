@@ -92,7 +92,7 @@ public class ScreenshotService extends AccessibilityService {
         super.onServiceConnected();
         instance = this;
         NowState.start(this);
-        DebugState.append(this, "无障碍服务已连接：截图/读屏/节点坐标/活动轨迹/远程息屏/专注模式可用 v0.3.9.0");
+        DebugState.append(this, "无障碍服务已连接：截图/读屏/节点坐标/活动轨迹/远程息屏/专注模式可用 v0.3.9.1");
         watchdog = new Handler(Looper.getMainLooper());
         watchdog.postDelayed(watchdogTick, 15000);
         startBackgroundPolling();
@@ -144,7 +144,7 @@ public class ScreenshotService extends AccessibilityService {
         backgroundPollThread = new HandlerThread("LinjianAccessibilityPoll");
         backgroundPollThread.start();
         backgroundPollHandler = new Handler(backgroundPollThread.getLooper());
-        DebugState.append(this, "无障碍兜底轮询已启动 v0.3.9.0（前台服务运行时不重复轮询）");
+        DebugState.append(this, "无障碍兜底轮询已启动 v0.3.9.1（前台服务运行时不重复轮询）");
         backgroundPollHandler.postDelayed(backgroundPollTick, 6000);
     }
 
@@ -339,30 +339,51 @@ public class ScreenshotService extends AccessibilityService {
         return dispatchGesture(new GestureDescription.Builder().addStroke(stroke).build(), null, null);
     }
 
-    public void doScreenshot(String serverUrl, String token) {
-        if (Build.VERSION.SDK_INT < 30) { DebugState.append(this, "截图失败：Android 版本低于 11"); return; }
+    public void doScreenshot(String serverUrl, String token) { doScreenshot(serverUrl, token, ""); }
+
+    public void doScreenshot(String serverUrl, String token, String commandId) {
+        if (Build.VERSION.SDK_INT < 30) {
+            DebugState.append(this, "截图失败：Android 版本低于 11");
+            CompanionService.reportCommandOutcome(this, serverUrl, token, commandId, false, "android_version_below_11");
+            return;
+        }
         final String finalUrl = normalizeUrl(serverUrl);
+        final String finalCommandId = commandId == null ? "" : commandId.trim();
         DebugState.append(this, "开始调用系统截图 API");
         takeScreenshot(Display.DEFAULT_DISPLAY, executor, new TakeScreenshotCallback() {
             @Override public void onSuccess(ScreenshotResult result) {
                 try {
                     DebugState.append(ScreenshotService.this, "系统截图成功，开始编码");
                     Bitmap hardwareBitmap = Bitmap.wrapHardwareBuffer(result.getHardwareBuffer(), result.getColorSpace());
-                    if (hardwareBitmap == null) { DebugState.append(ScreenshotService.this, "截图失败：Bitmap 为空"); return; }
+                    if (hardwareBitmap == null) {
+                        DebugState.append(ScreenshotService.this, "截图失败：Bitmap 为空");
+                        CompanionService.reportCommandOutcome(ScreenshotService.this, finalUrl, token, finalCommandId, false, "screenshot_bitmap_empty");
+                        return;
+                    }
                     Bitmap bitmap = hardwareBitmap.copy(Bitmap.Config.ARGB_8888, false);
                     hardwareBitmap.recycle(); result.getHardwareBuffer().close();
                     ByteArrayOutputStream out = new ByteArrayOutputStream();
                     bitmap.compress(Bitmap.CompressFormat.JPEG, 90, out); bitmap.recycle();
                     byte[] data = out.toByteArray();
                     DebugState.append(ScreenshotService.this, "截图编码完成：" + data.length + " bytes");
-                    if (data.length > 100) uploadScreenshot(data, finalUrl, token); else DebugState.append(ScreenshotService.this, "上传取消：截图数据太小");
-                } catch (Exception e) { DebugState.append(ScreenshotService.this, "截图处理异常：" + shortMsg(e)); }
+                    if (data.length > 100) uploadScreenshot(data, finalUrl, token, finalCommandId);
+                    else {
+                        DebugState.append(ScreenshotService.this, "上传取消：截图数据太小");
+                        CompanionService.reportCommandOutcome(ScreenshotService.this, finalUrl, token, finalCommandId, false, "screenshot_data_too_small");
+                    }
+                } catch (Exception e) {
+                    DebugState.append(ScreenshotService.this, "截图处理异常：" + shortMsg(e));
+                    CompanionService.reportCommandOutcome(ScreenshotService.this, finalUrl, token, finalCommandId, false, "screenshot_processing_failed:" + shortMsg(e));
+                }
             }
-            @Override public void onFailure(int errorCode) { DebugState.append(ScreenshotService.this, "系统截图失败：errorCode=" + errorCode + "（可尝试关闭再开启无障碍）"); }
+            @Override public void onFailure(int errorCode) {
+                DebugState.append(ScreenshotService.this, "系统截图失败：errorCode=" + errorCode + "（可尝试关闭再开启无障碍）");
+                CompanionService.reportCommandOutcome(ScreenshotService.this, finalUrl, token, finalCommandId, false, "system_screenshot_failed:" + errorCode);
+            }
         });
     }
 
-    private void uploadScreenshot(byte[] data, String serverUrl, String token) {
+    private void uploadScreenshot(byte[] data, String serverUrl, String token, String commandId) {
         try {
             DebugState.append(this, "开始上传截图到 /api/screenshot");
             HttpURLConnection conn = (HttpURLConnection) new URL(serverUrl + "/api/screenshot").openConnection();
@@ -370,13 +391,22 @@ public class ScreenshotService extends AccessibilityService {
             conn.setRequestProperty("X-Auth-Token", token);
             conn.setRequestProperty("Content-Type", "image/jpeg");
             conn.setRequestProperty("Content-Length", String.valueOf(data.length));
+            if (commandId != null && !commandId.isEmpty()) conn.setRequestProperty("X-Command-Id", commandId);
             conn.setConnectTimeout(15000); conn.setReadTimeout(30000);
             OutputStream os = conn.getOutputStream(); os.write(data); os.flush(); os.close();
             int code = conn.getResponseCode(); String body = readBody(conn, code);
-            if (code >= 200 && code < 300) DebugState.append(this, "上传成功：HTTP " + code + " " + clip(body));
-            else DebugState.append(this, "上传失败：HTTP " + code + " " + clip(body));
+            if (code >= 200 && code < 300) {
+                DebugState.append(this, "上传成功：HTTP " + code + " " + clip(body));
+                CompanionService.rememberCommandReceipt(this, commandId, true, "screenshot_uploaded");
+            } else {
+                DebugState.append(this, "上传失败：HTTP " + code + " " + clip(body));
+                CompanionService.reportCommandOutcome(this, serverUrl, token, commandId, false, "screenshot_upload_http_" + code);
+            }
             conn.disconnect();
-        } catch (Exception e) { DebugState.append(this, "上传异常：" + shortMsg(e)); }
+        } catch (Exception e) {
+            DebugState.append(this, "上传异常：" + shortMsg(e));
+            CompanionService.reportCommandOutcome(this, serverUrl, token, commandId, false, "screenshot_upload_failed:" + shortMsg(e));
+        }
     }
 
     public static String normalizeUrl(String url) { if (url == null) return ""; url = url.trim(); while (url.endsWith("/")) url = url.substring(0, url.length() - 1); return url; }

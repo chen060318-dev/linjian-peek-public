@@ -1,0 +1,28 @@
+name: Phone backend tests
+
+on:
+  pull_request:
+    paths:
+      - 'server/**'
+      - '.github/workflows/server-tests.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'server/**'
+      - '.github/workflows/server-tests.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Run phone backend tests
+        working-directory: server
+        run: python -m unittest discover -s tests -v
