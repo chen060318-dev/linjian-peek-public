@@ -136,7 +136,7 @@ public class MainActivity extends Activity {
         loadSettings();
         NowState.start(this);
 
-        DebugState.append(this, "掌心窗公开版 v0.3.9.2 已打开");
+        DebugState.append(this, "掌心窗公开版 v0.3.9.3 已打开");
         if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 13);
         serviceRunning = CompanionService.isPollingHealthy(this);
         updateUI();
@@ -2156,26 +2156,34 @@ public class MainActivity extends Activity {
         if (content == null) return;
         content.post(() -> {
             if (isFinishing() || content.getWidth() <= 0 || content.getHeight() <= 0) return;
-            UITheme t = UITheme.current(this);
-            FrameLayout splash = new FrameLayout(this);
-            splash.setBackground(t.background());
-            ImageView illustration = new ImageView(this);
-            illustration.setImageResource(R.drawable.cat_window_splash);
-            illustration.setScaleType(ImageView.ScaleType.CENTER_CROP);
-            splash.addView(illustration, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-            TextView wordmark = new TextView(this);
-            wordmark.setText("掌心窗"); wordmark.setTextSize(11); wordmark.setLetterSpacing(0.18f); wordmark.setGravity(Gravity.CENTER); wordmark.setTextColor(t.primary); wordmark.setAlpha(0f);
-            FrameLayout.LayoutParams wordmarkLp = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(38), Gravity.BOTTOM); wordmarkLp.bottomMargin = dp(38);
-            splash.addView(wordmark, wordmarkLp);
-            content.addView(splash, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
             View page = content.getChildAt(0);
             if (page != null) page.setAlpha(0f);
-            illustration.setAlpha(0f); illustration.setScaleX(0.91f); illustration.setScaleY(0.91f); illustration.setTranslationY(dp(18));
-            illustration.animate().alpha(1f).scaleX(1.035f).scaleY(1.035f).translationY(0f).setDuration(780).withEndAction(() ->
-                    illustration.animate().scaleX(1f).scaleY(1f).translationY(-dp(5)).setDuration(260).start()).start();
-            wordmark.animate().alpha(0.76f).setStartDelay(500).setDuration(360).start();
-            splash.animate().alpha(0f).setStartDelay(1480).setDuration(420).withEndAction(() -> content.removeView(splash)).start();
-            if (page != null) page.animate().alpha(1f).setStartDelay(1420).setDuration(500).start();
+            final int oldStatusColor = getWindow().getStatusBarColor();
+            final int oldNavigationColor = getWindow().getNavigationBarColor();
+            final int oldSystemUi = getWindow().getDecorView().getSystemUiVisibility();
+            getWindow().setStatusBarColor(Color.rgb(239, 244, 247));
+            getWindow().setNavigationBarColor(Color.rgb(239, 244, 247));
+            if (Build.VERSION.SDK_INT >= 26) {
+                getWindow().getDecorView().setSystemUiVisibility(oldSystemUi | View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR | View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR);
+            } else if (Build.VERSION.SDK_INT >= 23) {
+                getWindow().getDecorView().setSystemUiVisibility(oldSystemUi | View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR);
+            }
+
+            final RainSplashView[] splashRef = new RainSplashView[1];
+            RainSplashView splash = new RainSplashView(this, () -> {
+                if (page != null) page.animate().alpha(1f).setDuration(460).start();
+                RainSplashView activeSplash = splashRef[0];
+                if (activeSplash == null) return;
+                activeSplash.animate().alpha(0f).setDuration(460).withEndAction(() -> {
+                    content.removeView(activeSplash);
+                    getWindow().setStatusBarColor(oldStatusColor);
+                    getWindow().setNavigationBarColor(oldNavigationColor);
+                    getWindow().getDecorView().setSystemUiVisibility(oldSystemUi);
+                }).start();
+            });
+            splashRef[0] = splash;
+            content.addView(splash, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+            splash.start();
         });
     }
 
@@ -2485,7 +2493,7 @@ public class MainActivity extends Activity {
         getSharedPreferences(AppPrefs.PREFS, MODE_PRIVATE).edit().putBoolean("user_stopped", false).apply(); requestIgnoreBatteryOptimization();
         Intent intent = new Intent(this, CompanionService.class); intent.putExtra("server_url", url); intent.putExtra("token", token);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(intent); else startService(intent);
-        DebugState.append(this, "已请求启动前台服务：公开版 v0.3.9.2 后台轮询心跳与自动恢复已启用"); serviceRunning = true; updateUI();
+        DebugState.append(this, "已请求启动前台服务：公开版 v0.3.9.3 后台轮询心跳与自动恢复已启用"); serviceRunning = true; updateUI();
     }
 
     private void stopCompanionService() { getSharedPreferences(AppPrefs.PREFS, MODE_PRIVATE).edit().putBoolean("user_stopped", true).apply(); stopService(new Intent(this, CompanionService.class)); DebugState.append(this, "已停止服务"); serviceRunning = false; updateUI(); }
