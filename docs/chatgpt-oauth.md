@@ -42,7 +42,9 @@
 - `phone.read`：读取手机状态与应用时长
 - `phone.control`：未来才使用的控制权限；当前不要授予
 
-建议在 API Settings 中启用 RBAC，并把权限加入 Access Token。只给自己的 Auth0 用户分配 `phone.read`。在数据库连接设置中开启 **Disable Sign Ups**，避免陌生人注册后获得访问资格。
+建议在 API Settings 中启用 RBAC，并把权限加入 Access Token。只给自己的 Auth0 用户分配所需权限。在数据库连接设置中开启 **Disable Sign Ups**，避免陌生人注册后获得访问资格。
+
+Auth0 开启 RBAC 与 **Add Permissions in the Access Token** 后，会把直接分配的 API 权限放入已签名 JWT 的 `permissions` 数组；OAuth 客户端实际请求的范围仍可能同时出现在 `scope`。MCP 会在完成签名、issuer 与 audience 校验后，合并 `scope`、`scp` 和 `permissions` 作为有效授权集合。
 
 如果 Auth0 API Identifier 与 Render 自动生成的 MCP 地址不同，请在 Render 的 MCP 服务 Environment 中新增：
 
