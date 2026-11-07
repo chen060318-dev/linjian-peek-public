@@ -86,6 +86,17 @@ test("protected resource metadata is public and advertises OAuth scopes", async 
   assert.ok(body.scopes_supported.includes("phone.read"));
 });
 
+test("companion-enabled MCP entry challenge requests read and control scopes", async () => {
+  const response = await fetch(`${audience}/mcp`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: "{}"
+  });
+  assert.equal(response.status, 401);
+  const challenge = response.headers.get("www-authenticate") || "";
+  assert.match(challenge, /scope="phone\.read phone\.control"/);
+});
+
 test("all MCP transports reject missing credentials", async () => {
   for (const [method, path] of [["POST", "/mcp"], ["GET", "/sse"], ["POST", "/messages?sessionId=fake"], ["POST", "/mcp-wallet"]]) {
     const response = await fetch(audience + path, {
