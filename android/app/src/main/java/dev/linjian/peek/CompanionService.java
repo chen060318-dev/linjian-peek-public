@@ -76,7 +76,7 @@ public class CompanionService extends Service {
             DebugState.append(this, "服务启动失败：服务器地址或 Token 为空");
             stopSelf(); return START_NOT_STICKY;
         }
-        DebugState.append(this, "掌心窗公开版 v0.3.9.2 服务已启动，目标：" + serverUrl);
+        DebugState.append(this, "掌心窗公开版 v0.3.9.3 服务已启动，目标：" + serverUrl);
         if (!isPollingHealthy(this)) {
             if (pollHandler != null) pollHandler.removeCallbacksAndMessages(null);
             if (pollThread != null) pollThread.quitSafely();
@@ -132,7 +132,7 @@ public class CompanionService extends Service {
         try {
             if (getSharedPreferences(AppPrefs.PREFS, MODE_PRIVATE).getBoolean("user_stopped", true)) return;
             Intent restart = new Intent(this, ServiceRestartReceiver.class).setAction(ServiceRestartReceiver.ACTION_RESTART);
-            PendingIntent pending = PendingIntent.getBroadcast(this, 30902, restart, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+            PendingIntent pending = PendingIntent.getBroadcast(this, 30903, restart, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
             AlarmManager alarm = (AlarmManager) getSystemService(ALARM_SERVICE);
             if (alarm != null) alarm.setAndAllowWhileIdle(AlarmManager.ELAPSED_REALTIME_WAKEUP, SystemClock.elapsedRealtime() + 5000L, pending);
         } catch (Exception e) {
