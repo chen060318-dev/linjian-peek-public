@@ -59,7 +59,7 @@ const MCP_OAUTH_JWKS_URI = (process.env.MCP_OAUTH_JWKS_URI || "").trim();
 const MCP_READ_SCOPE = (process.env.MCP_OAUTH_READ_SCOPE || "phone.read").trim();
 const MCP_CONTROL_SCOPE = (process.env.MCP_OAUTH_CONTROL_SCOPE || "phone.control").trim();
 const MCP_ENABLE_SENSITIVE_TOOLS = /^true$/i.test(process.env.MCP_ENABLE_SENSITIVE_TOOLS || "false");
-// Limited everyday companion tools: does not enable screenshots, screen control, app locks, or checkout.
+// Limited everyday companion tools: enables explicitly allowlisted screenshots, reversible app locks, reminders, diary, and wallet approvals; it never enables arbitrary screen control or checkout.
 const MCP_ENABLE_COMPANION_TOOLS = /^true$/i.test(process.env.MCP_ENABLE_COMPANION_TOOLS || "false");
 const MCP_ENABLE_WALLET_TOOLS = /^true$/i.test(process.env.MCP_ENABLE_WALLET_TOOLS || "false");
 // When the limited companion mode is enabled, request both scopes during the initial
