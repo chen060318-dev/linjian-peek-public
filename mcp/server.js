@@ -1174,12 +1174,16 @@ function makeServer({ allowedToolNames = null, principal = {} } = {}) {
       title: "当前连接身份",
       description: "返回当前 OAuth 凭据对应的身份",
       inputSchema: {},
-      outputSchema: { id: z.string().min(1), name: z.string().optional(), email: z.string().optional(), nickname: z.string().optional() },
+      outputSchema: { id: z.string().min(1), name: z.string().optional(), email: z.string().optional(), nickname: z.string().optional(), granted_scopes: z.array(z.string()), phone_control_granted: z.boolean(), companion_tools_enabled: z.boolean(), tool_mode: z.string() },
       annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
       _meta: { securitySchemes: [{ type: "oauth2", scopes: [MCP_CONTROL_SCOPE] }], "openai/profile": true }
     }, async () => {
       const profile = {
         id: String(principal.sub || "authenticated-user"),
+        granted_scopes: [...(principal.scopes || [])].sort(),
+        phone_control_granted: Boolean(principal.scopes?.has(MCP_CONTROL_SCOPE)),
+        companion_tools_enabled: MCP_ENABLE_COMPANION_TOOLS,
+        tool_mode: "companion",
         ...(principal.claims?.name ? { name: String(principal.claims.name) } : {}),
         ...(principal.claims?.email ? { email: String(principal.claims.email) } : {}),
         ...(principal.claims?.nickname ? { nickname: String(principal.claims.nickname) } : {})
@@ -2373,13 +2377,21 @@ function makeReadOnlyServer(principal = {}) {
       id: z.string().min(1),
       name: z.string().optional(),
       email: z.string().optional(),
-      nickname: z.string().optional()
+      nickname: z.string().optional(),
+      granted_scopes: z.array(z.string()),
+      phone_control_granted: z.boolean(),
+      companion_tools_enabled: z.boolean(),
+      tool_mode: z.string()
     },
     annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     _meta: { ...meta, "openai/profile": true }
   }, async () => {
     const profile = {
       id: String(principal.sub || "authenticated-user"),
+      granted_scopes: [...(principal.scopes || [])].sort(),
+      phone_control_granted: Boolean(principal.scopes?.has(MCP_CONTROL_SCOPE)),
+      companion_tools_enabled: MCP_ENABLE_COMPANION_TOOLS,
+      tool_mode: "read_only",
       ...(principal.claims?.name ? { name: String(principal.claims.name) } : {}),
       ...(principal.claims?.email ? { email: String(principal.claims.email) } : {}),
       ...(principal.claims?.nickname ? { nickname: String(principal.claims.nickname) } : {})
