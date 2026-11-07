@@ -238,7 +238,7 @@ test("read-only OAuth client can discover companion step-up without access to wr
   });
   assert.equal(call.status, 200);
   const result = await call.text();
-  assert.match(result, /mcp\\/www_authenticate/);
+  assert.ok(result.includes("mcp/www_authenticate"));
   assert.match(result, /insufficient_scope/);
   assert.match(result, /phone.control/);
 });
