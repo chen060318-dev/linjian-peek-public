@@ -125,7 +125,7 @@ public class MainActivity extends Activity {
     private final Handler uiHandler = new Handler(Looper.getMainLooper());
 
     private final Runnable refreshTick = new Runnable() {
-        @Override public void run() { serviceRunning = CompanionService.isRunning(); updateUI(); uiHandler.postDelayed(this, 1500); }
+        @Override public void run() { serviceRunning = CompanionService.isPollingHealthy(MainActivity.this); updateUI(); uiHandler.postDelayed(this, 1500); }
     };
 
     @Override protected void onCreate(Bundle savedInstanceState) {
@@ -136,9 +136,9 @@ public class MainActivity extends Activity {
         loadSettings();
         NowState.start(this);
 
-        DebugState.append(this, "掌心窗公开版 v0.3.9.1 已打开");
+        DebugState.append(this, "掌心窗公开版 v0.3.9.2 已打开");
         if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 13);
-        serviceRunning = CompanionService.isRunning();
+        serviceRunning = CompanionService.isPollingHealthy(this);
         updateUI();
 
         if (accessibilityButton != null) accessibilityButton.setOnClickListener(v -> { if (recentlyOpenedAccessibilitySettings() && !isAccessibilityServiceEnabled()) showAccessibilityHelpDialog(); else openAccessibilitySettings(); });
@@ -2268,7 +2268,7 @@ public class MainActivity extends Activity {
 
     private int dp(float v) { return (int) (v * getResources().getDisplayMetrics().density + 0.5f); }
 
-    @Override protected void onResume() { super.onResume(); serviceRunning = CompanionService.isRunning(); updateUI(); if (recentlyOpenedAccessibilitySettings()) scheduleAccessibilityFollowupChecks(); uiHandler.removeCallbacks(refreshTick); uiHandler.post(refreshTick); }
+    @Override protected void onResume() { super.onResume(); serviceRunning = CompanionService.isPollingHealthy(this); updateUI(); if (recentlyOpenedAccessibilitySettings()) scheduleAccessibilityFollowupChecks(); uiHandler.removeCallbacks(refreshTick); uiHandler.post(refreshTick); }
     @Override protected void onPause() { saveConnectionSettingsOnly(true); uiHandler.removeCallbacks(refreshTick); super.onPause(); }
     @Override protected void onStop() { saveConnectionSettingsOnly(true); super.onStop(); }
 
@@ -2485,7 +2485,7 @@ public class MainActivity extends Activity {
         getSharedPreferences(AppPrefs.PREFS, MODE_PRIVATE).edit().putBoolean("user_stopped", false).apply(); requestIgnoreBatteryOptimization();
         Intent intent = new Intent(this, CompanionService.class); intent.putExtra("server_url", url); intent.putExtra("token", token);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(intent); else startService(intent);
-        DebugState.append(this, "已请求启动前台服务：公开版 v0.3.9.1 右侧 love 线稿花枝已启用"); serviceRunning = true; updateUI();
+        DebugState.append(this, "已请求启动前台服务：公开版 v0.3.9.2 后台轮询心跳与自动恢复已启用"); serviceRunning = true; updateUI();
     }
 
     private void stopCompanionService() { getSharedPreferences(AppPrefs.PREFS, MODE_PRIVATE).edit().putBoolean("user_stopped", true).apply(); stopService(new Intent(this, CompanionService.class)); DebugState.append(this, "已停止服务"); serviceRunning = false; updateUI(); }
@@ -2600,7 +2600,7 @@ public class MainActivity extends Activity {
     private void scheduleAccessibilityFollowupChecks() {
         long[] delays = new long[] { 600L, 1500L, 3000L, 6000L, 12000L };
         for (long delay : delays) {
-            uiHandler.postDelayed(() -> { serviceRunning = CompanionService.isRunning(); updateUI(); }, delay);
+            uiHandler.postDelayed(() -> { serviceRunning = CompanionService.isPollingHealthy(MainActivity.this); updateUI(); }, delay);
         }
     }
 

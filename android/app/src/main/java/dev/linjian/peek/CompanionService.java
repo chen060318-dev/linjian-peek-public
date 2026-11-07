@@ -6,6 +6,7 @@ import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.app.Service;
+import android.app.AlarmManager;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
@@ -16,6 +17,8 @@ import android.os.Build;
 import android.os.Handler;
 import android.os.HandlerThread;
 import android.os.IBinder;
+import android.os.PowerManager;
+import android.os.SystemClock;
 import android.provider.AlarmClock;
 
 import org.json.JSONArray;
@@ -37,15 +40,22 @@ public class CompanionService extends Service {
     private static final int NOTIFICATION_ID = 20260715;
     private static final int HOME_MODE_NOTIFICATION_ID = 20260913;
     private static volatile boolean running = false;
+    private static volatile long lastPollHeartbeatMs = 0L;
 
     private String serverUrl;
     private String token;
     private Handler pollHandler;
     private HandlerThread pollThread;
+    private PowerManager.WakeLock wakeLock;
     private long rateLimitedUntilMs = 0L;
     private static long lastStateUploadMs = 0L;
 
     public static boolean isRunning() { return running; }
+    public static boolean isPollingHealthy(Context ctx) {
+        if (!running || lastPollHeartbeatMs <= 0L) return false;
+        long staleAfterMs = Math.max(12000L, AppPrefs.interval(ctx) * 3L);
+        return SystemClock.elapsedRealtime() - lastPollHeartbeatMs <= staleAfterMs;
+    }
     @Override public IBinder onBind(Intent intent) { return null; }
 
     @Override public int onStartCommand(Intent intent, int flags, int startId) {
@@ -53,6 +63,7 @@ public class CompanionService extends Service {
         createNotificationChannel();
         NowState.start(this);
         startForeground(NOTIFICATION_ID, buildNotification("已启动，等待掌心窗命令"));
+        acquirePollingWakeLock();
         if (intent != null) {
             serverUrl = ScreenshotService.normalizeUrl(intent.getStringExtra("server_url"));
             token = intent.getStringExtra("token");
@@ -65,12 +76,19 @@ public class CompanionService extends Service {
             DebugState.append(this, "服务启动失败：服务器地址或 Token 为空");
             stopSelf(); return START_NOT_STICKY;
         }
-        DebugState.append(this, "掌心窗公开版 v0.3.9.1 服务已启动，目标：" + serverUrl);
-        if (!running) { running = true; startPolling(); } else DebugState.append(this, "服务已在运行，继续轮询");
+        DebugState.append(this, "掌心窗公开版 v0.3.9.2 服务已启动，目标：" + serverUrl);
+        if (!isPollingHealthy(this)) {
+            if (pollHandler != null) pollHandler.removeCallbacksAndMessages(null);
+            if (pollThread != null) pollThread.quitSafely();
+            running = true;
+            startPolling();
+            DebugState.append(this, "轮询心跳已启动/恢复");
+        } else DebugState.append(this, "服务轮询心跳正常，继续运行");
         return START_STICKY;
     }
 
     private void startPolling() {
+        lastPollHeartbeatMs = SystemClock.elapsedRealtime();
         pollThread = new HandlerThread("LinjianUnifiedPoll");
         pollThread.start();
         pollHandler = new Handler(pollThread.getLooper());
@@ -80,6 +98,7 @@ public class CompanionService extends Service {
 
     private void pollLoop() {
         if (!running) return;
+        lastPollHeartbeatMs = SystemClock.elapsedRealtime();
         long now = System.currentTimeMillis();
         long delay = AppPrefs.interval(this);
         try {
@@ -91,7 +110,40 @@ public class CompanionService extends Service {
                 if (body != null && body.length() > 0) handleCommandBody(this, body, serverUrl, token);
             }
         } catch (Exception e) { DebugState.append(this, "轮询异常：" + ScreenshotService.shortMsg(e)); }
+        lastPollHeartbeatMs = SystemClock.elapsedRealtime();
         if (running) pollHandler.postDelayed(this::pollLoop, Math.max(AppPrefs.MIN_POLL_INTERVAL_MS, delay));
+    }
+
+    private void acquirePollingWakeLock() {
+        try {
+            if (wakeLock != null && wakeLock.isHeld()) return;
+            PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
+            if (pm == null) return;
+            wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "linjian:command-poll");
+            wakeLock.setReferenceCounted(false);
+            wakeLock.acquire();
+            DebugState.append(this, "后台命令轮询唤醒锁已启用");
+        } catch (Exception e) {
+            DebugState.append(this, "后台唤醒锁启用失败：" + ScreenshotService.shortMsg(e));
+        }
+    }
+
+    private void scheduleRestart() {
+        try {
+            if (getSharedPreferences(AppPrefs.PREFS, MODE_PRIVATE).getBoolean("user_stopped", true)) return;
+            Intent restart = new Intent(this, ServiceRestartReceiver.class).setAction(ServiceRestartReceiver.ACTION_RESTART);
+            PendingIntent pending = PendingIntent.getBroadcast(this, 30902, restart, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+            AlarmManager alarm = (AlarmManager) getSystemService(ALARM_SERVICE);
+            if (alarm != null) alarm.setAndAllowWhileIdle(AlarmManager.ELAPSED_REALTIME_WAKEUP, SystemClock.elapsedRealtime() + 5000L, pending);
+        } catch (Exception e) {
+            DebugState.append(this, "安排服务重启失败：" + ScreenshotService.shortMsg(e));
+        }
+    }
+
+    @Override public void onTaskRemoved(Intent rootIntent) {
+        DebugState.append(this, "任务被划走，安排恢复后台轮询");
+        scheduleRestart();
+        super.onTaskRemoved(rootIntent);
     }
 
     private String pollServer() throws Exception {
@@ -637,5 +689,14 @@ public class CompanionService extends Service {
 
     private void createNotificationChannel() { if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) { NotificationManager nm = getSystemService(NotificationManager.class); NotificationChannel channel = new NotificationChannel(CHANNEL_ID, "掌心窗", NotificationManager.IMPORTANCE_LOW); channel.setDescription("掌心窗正在等待你授权的截图与手机动作请求"); nm.createNotificationChannel(channel); NotificationChannel reminder = new NotificationChannel(REMINDER_CHANNEL_ID, "掌心窗悬浮横幅提醒", NotificationManager.IMPORTANCE_HIGH); reminder.setDescription("来自掌心窗的悬浮横幅、生活提醒与回家模式"); reminder.setLockscreenVisibility(Notification.VISIBILITY_PUBLIC); reminder.enableVibration(true); nm.createNotificationChannel(reminder); } }
     private Notification buildNotification(String text) { Notification.Builder builder = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O ? new Notification.Builder(this, CHANNEL_ID) : new Notification.Builder(this); return builder.setContentTitle("掌心窗运行中").setContentText(text).setSmallIcon(android.R.drawable.ic_menu_view).setOngoing(true).build(); }
-    @Override public void onDestroy() { running = false; DebugState.append(this, "服务已销毁/停止"); if (pollThread != null) pollThread.quitSafely(); super.onDestroy(); }
+    @Override public void onDestroy() {
+        running = false;
+        lastPollHeartbeatMs = 0L;
+        DebugState.append(this, "服务已销毁/停止");
+        if (pollHandler != null) pollHandler.removeCallbacksAndMessages(null);
+        if (pollThread != null) pollThread.quitSafely();
+        if (wakeLock != null && wakeLock.isHeld()) { try { wakeLock.release(); } catch (Exception ignored) { } }
+        scheduleRestart();
+        super.onDestroy();
+    }
 }
