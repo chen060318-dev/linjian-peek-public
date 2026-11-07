@@ -1137,10 +1137,15 @@ const COMPANION_ALLOWED_TOOLS = new Set([
   "list_wallet_request_results", "list_companion_wallet_requests", "get_wallet_rules",
   "submit_wallet_approval", "submit_companion_wallet_request", "decide_wallet_approval",
   "save_wallet_request_result", "save_user_wallet_request_result",
-  "get_guidian_state", "get_care_policy", "get_care_history",
+  "get_guidian_state", "trigger_guidian", "mark_guidian_returned", "set_guidian_config",
+  "get_care_policy", "get_care_history", "care_action",
   "get_last_visit", "get_visit_history", "get_visit_stats", "record_visit",
-  "get_weather_state", "get_senses_state", "get_life_state",
-  "send_notification"
+  "get_weather_state", "send_weather_notification", "get_senses_state", "get_life_state",
+  "send_notification", "set_alarm",
+  "peek_screen", "latest_screen", "linjian_status",
+  "get_screen_break_state", "screen_break_app", "temporary_screen_break_release",
+  "end_screen_break", "extend_screen_break", "deny_screen_break_release_request",
+  "list_screen_break_apps", "list_lockable_apps"
 ]);
 
 function makeServer({ allowedToolNames = null, principal = {} } = {}) {
