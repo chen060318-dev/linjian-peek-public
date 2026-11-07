@@ -59,6 +59,8 @@ const MCP_OAUTH_JWKS_URI = (process.env.MCP_OAUTH_JWKS_URI || "").trim();
 const MCP_READ_SCOPE = (process.env.MCP_OAUTH_READ_SCOPE || "phone.read").trim();
 const MCP_CONTROL_SCOPE = (process.env.MCP_OAUTH_CONTROL_SCOPE || "phone.control").trim();
 const MCP_ENABLE_SENSITIVE_TOOLS = /^true$/i.test(process.env.MCP_ENABLE_SENSITIVE_TOOLS || "false");
+// Limited everyday companion tools: does not enable screenshots, screen control, app locks, or checkout.
+const MCP_ENABLE_COMPANION_TOOLS = /^true$/i.test(process.env.MCP_ENABLE_COMPANION_TOOLS || "false");
 const MCP_ENABLE_WALLET_TOOLS = /^true$/i.test(process.env.MCP_ENABLE_WALLET_TOOLS || "false");
 const MCP_ALLOWED_SUBJECTS = new Set(
   (process.env.MCP_ALLOWED_SUBJECTS || "").split(",").map((v) => v.trim()).filter(Boolean)
@@ -1110,7 +1112,26 @@ function makeWalletTakeoutServer() {
   return server;
 }
 
-function makeServer() {
+// Explicit allowlist for the everyday companion surface. Always keep high-risk phone
+// control (screen reading, tapping, input, app locks, checkout and deletion) out of this list.
+const COMPANION_ALLOWED_TOOLS = new Set([
+  "get_window_whisper", "set_window_whisper",
+  "get_companion_actions", "get_activity_events", "add_activity_event",
+  "get_guardian_calendar", "list_guardian_days", "add_guardian_calendar_event", "add_guardian_day", "update_guardian_day",
+  "create_diary_book", "list_diary_books", "rename_diary_book", "update_diary_book_cover",
+  "write_diary_entry", "list_diary_entries", "read_diary_entry", "read_diary_entry_with_annotations",
+  "search_diary_entries", "update_diary_entry", "add_diary_annotation", "list_diary_annotations", "mark_diary_annotations_seen",
+  "get_wallet_state", "get_wallet_month_state", "list_wallet_months", "list_wallet_pending", "list_wallet_approvals",
+  "list_wallet_request_results", "list_companion_wallet_requests", "get_wallet_rules",
+  "submit_wallet_approval", "submit_companion_wallet_request", "decide_wallet_approval",
+  "save_wallet_request_result", "save_user_wallet_request_result",
+  "get_guidian_state", "get_care_policy", "get_care_history",
+  "get_last_visit", "get_visit_history", "get_visit_stats", "record_visit",
+  "get_weather_state", "get_senses_state", "get_life_state",
+  "send_notification"
+]);
+
+function makeServer({ allowedToolNames = null, principal = {} } = {}) {
   const server = new McpServer({ name: "掌心窗", version: "0.3.9.0" });
   const commandBackedTools = new Set([
     "peek_screen", "get_screen_nodes", "tap_text", "input_text", "draft_xhs_comment", "xhs_comment", "send_visible_comment_after_confirmation",
@@ -1127,6 +1148,7 @@ function makeServer() {
   const originalTool = server.tool.bind(server);
   server.tool = (...args) => {
     const toolName = String(args[0] || "");
+    if (allowedToolNames && !allowedToolNames.has(toolName)) return undefined;
     const callbackIndex = args.map((x) => typeof x).lastIndexOf("function");
     if (callbackIndex >= 0 && toolName !== "get_activity_events" && toolName !== "add_activity_event" && !commandBackedTools.has(toolName)) {
       const callback = args[callbackIndex];
@@ -1145,6 +1167,26 @@ function makeServer() {
     return originalTool(...args);
   };
 
+
+  // Preserve the OAuth identity tool in the scoped companion mode as well.
+  if (allowedToolNames) {
+    server.registerTool("get_profile", {
+      title: "当前连接身份",
+      description: "返回当前 OAuth 凭据对应的身份",
+      inputSchema: {},
+      outputSchema: { id: z.string().min(1), name: z.string().optional(), email: z.string().optional(), nickname: z.string().optional() },
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+      _meta: { securitySchemes: [{ type: "oauth2", scopes: [MCP_CONTROL_SCOPE] }], "openai/profile": true }
+    }, async () => {
+      const profile = {
+        id: String(principal.sub || "authenticated-user"),
+        ...(principal.claims?.name ? { name: String(principal.claims.name) } : {}),
+        ...(principal.claims?.email ? { email: String(principal.claims.email) } : {}),
+        ...(principal.claims?.nickname ? { nickname: String(principal.claims.nickname) } : {})
+      };
+      return { content: [{ type: "text", text: JSON.stringify(profile) }], structuredContent: profile };
+    });
+  }
 
   // v0.3.8.2：专注模式工具靠前注册，避免部分客户端只读取前若干个 schema 时漏掉接口。
   server.tool("get_focus_status", "读取手机端专注模式 Focus Mode 状态：是否开启、目标、剩余时间、留言、应急次数。用户问专注模式、锁手机、全机专注、留言给他时优先调用。", {
@@ -2349,7 +2391,10 @@ function makeReadOnlyServer(principal = {}) {
 }
 
 function serverForRequest(req) {
-  if (MCP_ENABLE_SENSITIVE_TOOLS && req.auth?.scopes?.has(MCP_CONTROL_SCOPE)) return makeServer();
+  if (req.auth?.scopes?.has(MCP_CONTROL_SCOPE)) {
+    if (MCP_ENABLE_SENSITIVE_TOOLS) return makeServer();
+    if (MCP_ENABLE_COMPANION_TOOLS) return makeServer({ allowedToolNames: COMPANION_ALLOWED_TOOLS, principal: req.auth });
+  }
   return makeReadOnlyServer(req.auth || {});
 }
 
@@ -2401,7 +2446,8 @@ app.get("/health", (_req, res) => res.json({
   service: "linjian-public-mcp",
   version: "0.4.0-security",
   oauth_configured: oauthConfigured(),
-  read_only_mode: !MCP_ENABLE_SENSITIVE_TOOLS,
+  read_only_mode: !MCP_ENABLE_SENSITIVE_TOOLS && !MCP_ENABLE_COMPANION_TOOLS,
+  companion_tools_enabled: MCP_ENABLE_COMPANION_TOOLS,
   wallet_tools_enabled: MCP_ENABLE_WALLET_TOOLS,
   phone_backend_configured: Boolean(LINJIAN_URL_CANDIDATES.length && LINJIAN_TOKEN)
 }));

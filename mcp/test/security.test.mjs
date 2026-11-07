@@ -63,6 +63,7 @@ before(async () => {
       MCP_OAUTH_ISSUER: issuer,
       MCP_OAUTH_AUDIENCE: audience,
       MCP_ENABLE_SENSITIVE_TOOLS: "false",
+      MCP_ENABLE_COMPANION_TOOLS: "true",
       MCP_ENABLE_WALLET_TOOLS: "false",
       LINJIAN_URL: "http://127.0.0.1:9",
       LINJIAN_TOKEN: "phone-sync-token-used-only-between-services"
@@ -159,3 +160,24 @@ test("wallet and control surface remains disabled with valid control scope", asy
   assert.equal(response.status, 404);
 });
 
+
+test("scoped control token exposes companion diary and wallet but not phone control", async () => {
+  const accessToken = await token("phone.read phone.control");
+  const response = await fetch(`${audience}/mcp`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${accessToken}`,
+      "content-type": "application/json",
+      accept: "application/json, text/event-stream"
+    },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 7, method: "tools/list", params: {} })
+  });
+  assert.equal(response.status, 200);
+  const body = await response.text();
+  for (const enabled of ["get_profile", "write_diary_entry", "get_companion_actions", "list_wallet_approvals", "decide_wallet_approval", "get_guardian_calendar"]) {
+    assert.match(body, new RegExp(enabled), `expected ${enabled}`);
+  }
+  for (const disabled of ["peek_screen", "get_screen_nodes", "tap_text", "input_text", "send_phone_command", "open_app", "delete_diary_entry", "delete_wallet_record", "prepare_takeout_checkout", "wallet_takeout_action", "start_focus_mode"]) {
+    assert.doesNotMatch(body, new RegExp(`"name":"${disabled}"`), `unexpected ${disabled}`);
+  }
+});
