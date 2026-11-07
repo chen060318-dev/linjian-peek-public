@@ -85,24 +85,9 @@ function oauthJwks() {
 }
 
 function tokenScopes(payload = {}) {
-  const scopes = new Set();
-  const add = (raw) => {
-    const list = Array.isArray(raw) ? raw : String(raw || "").split(/\s+/);
-    for (const value of list) {
-      const scope = String(value || "").trim();
-      if (scope) scopes.add(scope);
-    }
-  };
-
-  // OAuth providers commonly use scope/scp. Auth0 RBAC additionally places
-  // directly assigned API permissions in a signed "permissions" array when
-  // "Add Permissions in the Access Token" is enabled. The whole JWT has
-  // already passed signature, issuer and audience verification before these
-  // values are used, so treat all three standard claims as effective grants.
-  add(payload.scope);
-  add(payload.scp);
-  add(payload.permissions);
-  return scopes;
+  const raw = payload.scope || payload.scp || [];
+  const list = Array.isArray(raw) ? raw : String(raw || "").split(/\s+/);
+  return new Set(list.map(String).filter(Boolean));
 }
 
 function bearerToken(req) {
