@@ -8,6 +8,7 @@ import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Context;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
 import android.net.Uri;
@@ -64,7 +65,7 @@ public class CompanionService extends Service {
             DebugState.append(this, "服务启动失败：服务器地址或 Token 为空");
             stopSelf(); return START_NOT_STICKY;
         }
-        DebugState.append(this, "掌心窗公开版 v0.3.9.0 服务已启动，目标：" + serverUrl);
+        DebugState.append(this, "掌心窗公开版 v0.3.9.1 服务已启动，目标：" + serverUrl);
         if (!running) { running = true; startPolling(); } else DebugState.append(this, "服务已在运行，继续轮询");
         return START_STICKY;
     }
@@ -133,6 +134,19 @@ public class CompanionService extends Service {
             JSONObject cmd = (JSONObject) raw;
             String id = cmd.optString("id", "");
             String action = cmd.optString("action", "noop");
+            JSONObject previousReceipt = commandReceipt(ctx, id);
+            if (previousReceipt != null) {
+                DebugState.append(ctx, "收到重复命令，直接重放回执：" + id + " " + action);
+                reportCommandOutcome(ctx, serverUrl, token, id, previousReceipt.optBoolean("ok", false), previousReceipt.optString("result", "duplicate_command_receipt"));
+                return;
+            }
+            long expiresAtMs = cmd.optLong("expires_at_ms", 0);
+            if (expiresAtMs > 0 && System.currentTimeMillis() >= expiresAtMs) {
+                reportCommandStatus(ctx, serverUrl, token, id, "expired", false, "command_expired_before_execution");
+                DebugState.append(ctx, "忽略已过期命令：" + id + " " + action);
+                return;
+            }
+            reportCommandStatus(ctx, serverUrl, token, id, "received", true, "phone_received_command");
             String app = cmd.optString("app", "");
             String pkg = cmd.optString("package", "");
             float x = (float) cmd.optDouble("x", 0);
@@ -165,6 +179,17 @@ public class CompanionService extends Service {
             String match = cmd.optString("match", "contains");
             int index = cmd.optInt("index", 1);
             boolean append = cmd.optBoolean("append", false);
+            if ("peek".equals(action)) {
+                ScreenshotService screenshotService = ScreenshotService.getInstance();
+                if (screenshotService == null) {
+                    reportCommandOutcome(ctx, serverUrl, token, id, false, "accessibility service not ready");
+                } else {
+                    reportCommandStatus(ctx, serverUrl, token, id, "capturing", true, "screenshot_capture_started");
+                    screenshotService.doScreenshot(serverUrl, token, id);
+                }
+                return;
+            }
+            reportCommandStatus(ctx, serverUrl, token, id, "execution_started", true, "execution_started");
             if ("get_calendar_state".equals(action) || "upsert_calendar_event".equals(action) || "add_calendar_event".equals(action) || "delete_calendar_event".equals(action)) {
                 JSONObject rr = CalendarState.handleCommand(ctx, cmd);
                 boolean ok = rr.optBoolean("ok", false);
@@ -551,14 +576,59 @@ public class CompanionService extends Service {
         HomeMode.evaluate(ctx, state);
     }
 
+    private static JSONObject commandReceipt(Context ctx, String id) {
+        if (ctx == null || id == null || id.length() == 0) return null;
+        try {
+            JSONArray list = new JSONArray(AppPrefs.get(ctx).getString("command_receipts_v1", "[]"));
+            for (int i = 0; i < list.length(); i++) {
+                JSONObject item = list.optJSONObject(i);
+                if (item != null && id.equals(item.optString("id", ""))) return item;
+            }
+        } catch (Exception ignored) { }
+        return null;
+    }
+
+    public static void rememberCommandReceipt(Context ctx, String id, boolean ok, String result) {
+        if (ctx == null || id == null || id.length() == 0) return;
+        try {
+            JSONArray old = new JSONArray(AppPrefs.get(ctx).getString("command_receipts_v1", "[]"));
+            JSONArray next = new JSONArray();
+            JSONObject current = new JSONObject().put("id", id).put("ok", ok).put("result", result == null ? "" : result).put("at_ms", System.currentTimeMillis());
+            next.put(current);
+            for (int i = 0; i < old.length() && next.length() < 50; i++) {
+                JSONObject item = old.optJSONObject(i);
+                if (item != null && !id.equals(item.optString("id", ""))) next.put(item);
+            }
+            AppPrefs.get(ctx).edit().putString("command_receipts_v1", next.toString()).apply();
+        } catch (Exception ignored) { }
+    }
+
+    private static void reportCommandStatus(Context ctx, String serverUrl, String token, String id, String status, boolean ok, String result) {
+        if (id == null || id.length() == 0) return;
+        new Thread(() -> {
+            try {
+                JSONObject report = new JSONObject();
+                report.put("device_id", AppPrefs.device(ctx)); report.put("command_id", id); report.put("status", status); report.put("ok", ok); report.put("result", result == null ? "" : result); report.put("phone_time_ms", System.currentTimeMillis());
+                postJson(serverUrl + "/api/device/report", token, report);
+            } catch (Exception e) { DebugState.append(ctx, "阶段回执失败 " + status + "：" + ScreenshotService.shortMsg(e)); }
+        }, "LinjianAck-" + status).start();
+    }
+
+    public static void reportCommandOutcome(Context ctx, String serverUrl, String token, String id, boolean ok, String result) {
+        try { reportCommand(ctx, serverUrl, token, id, ok, result); }
+        catch (Exception e) { DebugState.append(ctx, "最终回执失败：" + ScreenshotService.shortMsg(e)); }
+    }
+
     private static void reportCommand(Context ctx, String serverUrl, String token, String id, boolean ok, String result) throws Exception {
         if (id == null || id.length() == 0) return;
-        JSONObject report = new JSONObject(); report.put("device_id", AppPrefs.device(ctx)); report.put("command_id", id); report.put("ok", ok); report.put("result", result);
+        rememberCommandReceipt(ctx, id, ok, result);
+        JSONObject report = new JSONObject(); report.put("device_id", AppPrefs.device(ctx)); report.put("command_id", id); report.put("status", ok ? "completed" : "failed"); report.put("ok", ok); report.put("result", result); report.put("phone_time_ms", System.currentTimeMillis());
         postJson(serverUrl + "/api/device/report", token, report);
     }
 
     private static String postJson(String urlStr, String token, JSONObject obj) throws Exception {
         HttpURLConnection conn = (HttpURLConnection)new URL(urlStr).openConnection(); conn.setRequestMethod("POST"); conn.setRequestProperty("Content-Type", "application/json; charset=utf-8"); conn.setRequestProperty("X-Auth-Token", token); conn.setDoOutput(true);
+        conn.setConnectTimeout(8000); conn.setReadTimeout(12000);
         byte[] data = obj.toString().getBytes(StandardCharsets.UTF_8); try (OutputStream os = conn.getOutputStream()) { os.write(data); }
         InputStream is = conn.getResponseCode() >= 400 ? conn.getErrorStream() : conn.getInputStream();
         ByteArrayOutputStream bos = new ByteArrayOutputStream(); if (is != null) { byte[] buf = new byte[1024]; int n; while ((n = is.read(buf)) > 0) bos.write(buf,0,n); }
