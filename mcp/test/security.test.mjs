@@ -181,3 +181,32 @@ test("scoped control token exposes companion diary and wallet but not phone cont
     assert.doesNotMatch(body, new RegExp(`"name":"${disabled}"`), `unexpected ${disabled}`);
   }
 });
+
+test("get_profile shows token scopes without exposing bearer token", async () => {
+  for (const [scope, expectedMode] of [
+    ["phone.read", "read_only"],
+    ["phone.read phone.control", "companion"]
+  ]) {
+    const accessToken = await token(scope);
+    const response = await fetch(`${audience}/mcp`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${accessToken}`,
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream"
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0", id: 91, method: "tools/call",
+        params: { name: "get_profile", arguments: {} }
+      })
+    });
+    assert.equal(response.status, 200);
+    const body = await response.text();
+    assert.match(body, /granted_scopes/);
+    assert.match(body, /phone\.read/);
+    assert.match(body, new RegExp(expectedMode));
+    if (expectedMode === "companion") assert.match(body, /phone\.control/);
+    else assert.doesNotMatch(body, /phone\.control/);
+    assert.ok(!body.includes(accessToken), "token must not be echoed");
+  }
+});
