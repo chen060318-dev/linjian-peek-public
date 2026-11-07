@@ -60,6 +60,9 @@ services:
       # 安全默认值：只注册手机状态与应用时长工具。
       - key: MCP_ENABLE_SENSITIVE_TOOLS
         value: "false"
+      # Optional limited companion features (diaries, activity history, wallet approval); never enables screen control.
+      - key: MCP_ENABLE_COMPANION_TOOLS
+        value: "false"
       - key: MCP_ENABLE_WALLET_TOOLS
         value: "false"
 
