@@ -1,7 +1,7 @@
 # 掌心窗：日常陪伴工具模式（安全默认关闭）
 
-这个模式专门用于 ChatGPT 中的日记、行动记录、窗语、小金库申请及审批、守护日历和轻量生活记录。
-它不会开放手机截图、读取屏幕节点、点击/输入、应用门禁、删除账本和日记、外卖自动操作。
+这个模式专门用于 ChatGPT 中的日记、行动记录、窗语、小金库申请及审批、守护日历，以及经过用户授权的守护功能。
+它可以开放授权截图、限时应用门禁、系统通知/闹钟、天气提醒和归电文案配置；仍不会开放屏幕节点读取、任意点击/输入、删除账本和日记或外卖自动操作。
 
 ## 开启方式
 
@@ -20,6 +20,9 @@
 - `list_wallet_approvals`、`decide_wallet_approval`、`save_wallet_request_result`：查看并处理用户的花钱申请；不会直接扣款。
 - `get_guardian_calendar`、`add_guardian_day`：纪念日管理。
 - `get_window_whisper`、`set_window_whisper`、到访记录、天气与轻量通知：陪伴内容。
+- `peek_screen`、`latest_screen`：在手机端已授予截图权限时请求或读取截图。
+- `screen_break_app` 及配套状态/解除工具：给指定 App 设置可恢复的限时门禁。
+- `send_weather_notification`、`set_alarm`、`trigger_guidian`、`set_guidian_config`：天气提醒、系统闹钟和自定义归电。
 
 **主动通知的边界：** MCP 工具不会自动让 ChatGPT 在后台收到 App 事件。若需要「提交申请后 Riven 主动来审批」，要另外设置定时检查或可信事件触发流程。
 
