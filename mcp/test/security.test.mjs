@@ -210,3 +210,35 @@ test("get_profile shows token scopes without exposing bearer token", async () =>
     assert.ok(!body.includes(accessToken), "token must not be echoed");
   }
 });
+
+test("read-only OAuth client can discover companion step-up without access to write tools", async () => {
+  const accessToken = await token("phone.read");
+  const headers = {
+    authorization: `Bearer ${accessToken}`,
+    "content-type": "application/json",
+    accept: "application/json, text/event-stream"
+  };
+  const list = await fetch(`${audience}/mcp`, {
+    method: "POST", headers,
+    body: JSON.stringify({ jsonrpc: "2.0", id: 90, method: "tools/list", params: {} })
+  });
+  assert.equal(list.status, 200);
+  const text = await list.text();
+  assert.match(text, /request_companion_access/);
+  assert.match(text, /phone.control/);
+  for (const unavailable of ["write_diary_entry", "decide_wallet_approval", "tap_text", "peek_screen"]) {
+    assert.doesNotMatch(text, new RegExp(`"name":"${unavailable}"`));
+  }
+  const call = await fetch(`${audience}/mcp`, {
+    method: "POST", headers,
+    body: JSON.stringify({
+      jsonrpc: "2.0", id: 91, method: "tools/call",
+      params: { name: "request_companion_access", arguments: {} }
+    })
+  });
+  assert.equal(call.status, 200);
+  const result = await call.text();
+  assert.ok(result.includes("mcp/www_authenticate"));
+  assert.match(result, /insufficient_scope/);
+  assert.match(result, /phone.control/);
+});
