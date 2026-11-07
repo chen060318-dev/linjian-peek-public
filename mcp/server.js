@@ -96,6 +96,12 @@ function tokenScopes(payload = {}) {
   return new Set(list.map(String).filter(Boolean));
 }
 
+function tokenPermissions(payload = {}) {
+  const raw = payload.permissions || [];
+  const list = Array.isArray(raw) ? raw : String(raw || "").split(/\s+/);
+  return [...new Set(list.map(String).filter(Boolean))].sort();
+}
+
 function bearerToken(req) {
   const match = String(req.headers.authorization || "").match(/^Bearer\s+(.+)$/i);
   return match ? match[1].trim() : "";
@@ -1180,13 +1186,14 @@ function makeServer({ allowedToolNames = null, principal = {} } = {}) {
       title: "当前连接身份",
       description: "返回当前 OAuth 凭据对应的身份",
       inputSchema: {},
-      outputSchema: { id: z.string().min(1), name: z.string().optional(), email: z.string().optional(), nickname: z.string().optional(), granted_scopes: z.array(z.string()), phone_control_granted: z.boolean(), companion_tools_enabled: z.boolean(), tool_mode: z.string() },
+      outputSchema: { id: z.string().min(1), name: z.string().optional(), email: z.string().optional(), nickname: z.string().optional(), granted_scopes: z.array(z.string()), token_permissions: z.array(z.string()), phone_control_granted: z.boolean(), companion_tools_enabled: z.boolean(), tool_mode: z.string() },
       annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
       _meta: { securitySchemes: [{ type: "oauth2", scopes: [MCP_CONTROL_SCOPE] }], "openai/profile": true }
     }, async () => {
       const profile = {
         id: String(principal.sub || "authenticated-user"),
         granted_scopes: [...(principal.scopes || [])].sort(),
+        token_permissions: tokenPermissions(principal.claims),
         phone_control_granted: Boolean(principal.scopes?.has(MCP_CONTROL_SCOPE)),
         companion_tools_enabled: MCP_ENABLE_COMPANION_TOOLS,
         tool_mode: "companion",
@@ -2385,6 +2392,7 @@ function makeReadOnlyServer(principal = {}) {
       email: z.string().optional(),
       nickname: z.string().optional(),
       granted_scopes: z.array(z.string()),
+      token_permissions: z.array(z.string()),
       phone_control_granted: z.boolean(),
       companion_tools_enabled: z.boolean(),
       tool_mode: z.string()
@@ -2395,6 +2403,7 @@ function makeReadOnlyServer(principal = {}) {
     const profile = {
       id: String(principal.sub || "authenticated-user"),
       granted_scopes: [...(principal.scopes || [])].sort(),
+      token_permissions: tokenPermissions(principal.claims),
       phone_control_granted: Boolean(principal.scopes?.has(MCP_CONTROL_SCOPE)),
       companion_tools_enabled: MCP_ENABLE_COMPANION_TOOLS,
       tool_mode: "read_only",
