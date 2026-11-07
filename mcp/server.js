@@ -62,6 +62,12 @@ const MCP_ENABLE_SENSITIVE_TOOLS = /^true$/i.test(process.env.MCP_ENABLE_SENSITI
 // Limited everyday companion tools: does not enable screenshots, screen control, app locks, or checkout.
 const MCP_ENABLE_COMPANION_TOOLS = /^true$/i.test(process.env.MCP_ENABLE_COMPANION_TOOLS || "false");
 const MCP_ENABLE_WALLET_TOOLS = /^true$/i.test(process.env.MCP_ENABLE_WALLET_TOOLS || "false");
+// When the limited companion mode is enabled, request both scopes during the initial
+// ChatGPT connection. Read-only tokens remain valid so existing connections can still
+// discover the explicit step-up tool, but fresh connections no longer depend on it.
+const MCP_CONNECT_SCOPE = MCP_ENABLE_COMPANION_TOOLS
+  ? `${MCP_READ_SCOPE} ${MCP_CONTROL_SCOPE}`
+  : MCP_READ_SCOPE;
 const MCP_ALLOWED_SUBJECTS = new Set(
   (process.env.MCP_ALLOWED_SUBJECTS || "").split(",").map((v) => v.trim()).filter(Boolean)
 );
@@ -101,7 +107,7 @@ function sendOAuthChallenge(req, res, scope, status = 401, error = "invalid_toke
   return res.status(status).json({ ok: false, error, error_description: description });
 }
 
-function requireOAuth(scope) {
+function requireOAuth(scope, authorizationScope = scope) {
   return async (req, res, next) => {
     if (!oauthConfigured()) {
       return res.status(503).json({
@@ -111,7 +117,7 @@ function requireOAuth(scope) {
       });
     }
     const token = bearerToken(req);
-    if (!token) return sendOAuthChallenge(req, res, scope);
+    if (!token) return sendOAuthChallenge(req, res, authorizationScope);
     try {
       const { payload, protectedHeader } = await jwtVerify(token, oauthJwks(), {
         issuer: MCP_OAUTH_ISSUER,
@@ -120,7 +126,7 @@ function requireOAuth(scope) {
       });
       const scopes = tokenScopes(payload);
       if (!scopes.has(scope)) {
-        return sendOAuthChallenge(req, res, scope, 403, "insufficient_scope", `Required scope: ${scope}`);
+        return sendOAuthChallenge(req, res, authorizationScope, 403, "insufficient_scope", `Required scope: ${scope}`);
       }
       if (MCP_ALLOWED_SUBJECTS.size && !MCP_ALLOWED_SUBJECTS.has(String(payload.sub || ""))) {
         return res.status(403).json({ ok: false, error: "subject_not_allowed" });
@@ -129,7 +135,7 @@ function requireOAuth(scope) {
       next();
     } catch (error) {
       console.warn("OAuth verification failed:", error?.code || error?.message || "invalid token");
-      return sendOAuthChallenge(req, res, scope, 401, "invalid_token", "Token verification failed");
+      return sendOAuthChallenge(req, res, authorizationScope, 401, "invalid_token", "Token verification failed");
     }
   };
 }
@@ -2507,7 +2513,7 @@ function sanitizeMcpRequestBody(body) {
   return sanitizeMcpInitializeMessage(body);
 }
 
-app.post("/mcp", requireOAuth(MCP_READ_SCOPE), async (req, res) => {
+app.post("/mcp", requireOAuth(MCP_READ_SCOPE, MCP_CONNECT_SCOPE), async (req, res) => {
   try {
     const server = serverForRequest(req);
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
@@ -2520,7 +2526,7 @@ app.post("/mcp", requireOAuth(MCP_READ_SCOPE), async (req, res) => {
     if (!res.headersSent) res.status(500).json({ jsonrpc: "2.0", error: { code: -32603, message: "Internal MCP error" }, id: null });
   }
 });
-app.get("/mcp", requireOAuth(MCP_READ_SCOPE), (_req, res) => res.status(405).json({ ok: false, error: "Use POST /mcp for Streamable HTTP MCP." }));
+app.get("/mcp", requireOAuth(MCP_READ_SCOPE, MCP_CONNECT_SCOPE), (_req, res) => res.status(405).json({ ok: false, error: "Use POST /mcp for Streamable HTTP MCP." }));
 
 app.post("/mcp-wallet", requireOAuth(MCP_CONTROL_SCOPE), async (req, res) => {
   if (!MCP_ENABLE_SENSITIVE_TOOLS || !MCP_ENABLE_WALLET_TOOLS) {
@@ -2541,7 +2547,7 @@ app.post("/mcp-wallet", requireOAuth(MCP_CONTROL_SCOPE), async (req, res) => {
 app.get("/mcp-wallet", requireOAuth(MCP_CONTROL_SCOPE), (_req, res) => res.status(405).json({ ok: false, error: "Use POST /mcp-wallet." }));
 
 const sseTransports = new Map();
-app.get("/sse", requireOAuth(MCP_READ_SCOPE), async (req, res) => {
+app.get("/sse", requireOAuth(MCP_READ_SCOPE, MCP_CONNECT_SCOPE), async (req, res) => {
   try {
     const transport = new SSEServerTransport("/messages", res);
     sseTransports.set(transport.sessionId, { transport, subject: req.auth.sub });
@@ -2555,7 +2561,7 @@ app.get("/sse", requireOAuth(MCP_READ_SCOPE), async (req, res) => {
     if (!res.headersSent) res.status(500).end("Internal SSE error");
   }
 });
-app.post("/messages", requireOAuth(MCP_READ_SCOPE), async (req, res) => {
+app.post("/messages", requireOAuth(MCP_READ_SCOPE, MCP_CONNECT_SCOPE), async (req, res) => {
   const sessionId = req.query.sessionId;
   const entry = sseTransports.get(sessionId);
   if (!entry) return res.status(404).send("No SSE transport for sessionId");
