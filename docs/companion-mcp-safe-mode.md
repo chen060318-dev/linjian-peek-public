@@ -8,7 +8,7 @@
 1. 将包含此功能的分支合并到部署仓库，并在 Render 重新部署 `zhangxinchuang-mcp`。
 2. 在 MCP 服务的 Render Environment 里新增/修改 `MCP_ENABLE_COMPANION_TOOLS=true`，保留 `MCP_ENABLE_SENSITIVE_TOOLS=false` 与 `MCP_ENABLE_WALLET_TOOLS=false`。
 3. 掌心窗现有 MCP URL `https://<你的-mcp-域名>/mcp` 不必改变。OAuth access token 需要 **同时** 具备 `phone.read` 和 `phone.control` scope 才能在普通 `/mcp` 获取日常陪伴工具；只有 `phone.read` 的 token 仍只会看到原来的三项只读工具。
-4. 在 ChatGPT 连接器中刷新/重新连接掌心窗，让工具列表重新被发现。测试 `list_wallet_approvals`、`get_companion_actions`、`list_diary_books`，并检查不能调用 `tap_text`、`peek_screen`。
+4. 在 ChatGPT 连接器中刷新/重新连接掌心窗，让工具列表重新被发现。测试 `list_wallet_approvals`、`get_companion_actions`、`list_diary_books`，并检查不能调用 `get_screen_nodes`、`tap_text`、`input_text`。
 5. 即使工具注册成功，实际写入仍依赖手机端在线、执行器同步，并可能等待手机确认；审批仅更新掌心窗记录，不会代替用户付款。
 
 > 安全注意：`phone.control` 是 OAuth 权限名称，并不意味着此模式会向聊天提供完整屏幕控制工具。实际能力由服务器端的 `COMPANION_ALLOWED_TOOLS` 严格白名单限制。不要同时打开 `MCP_ENABLE_SENSITIVE_TOOLS=true`，否则会覆盖限制，暴露完整功能。最好将 OAuth access 限制在自己的账户，并设置 `MCP_ALLOWED_SUBJECTS`。
