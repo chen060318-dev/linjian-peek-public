@@ -685,6 +685,16 @@ app.get("/health", (_req: Request, res: Response) => {
     version: "0.2.0",
     hasSensorData: latestSensor !== null,
     presence: dataFreshness(),
+    tools: [
+      "get_environment_snapshot",
+      "get_device_state",
+      "get_presence_status",
+      "get_weather_context",
+      "get_air_quality_context",
+      "get_ambient_light",
+      "get_sound_scene",
+      "get_motion_state"
+    ]
   });
 });
 
