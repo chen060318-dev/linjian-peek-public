@@ -19,10 +19,34 @@ function hasDefaultLocation() {
 type SensorState = {
   batteryPercent: number | null;
   charging: boolean | null;
+  batteryHealth: string | null;
+  batteryPlugged: string | null;
+  batteryStatus: string | null;
+  batteryTemperatureC: number | null;
+  batteryCurrentUa: number | null;
+
+  deviceModel: string | null;
+  deviceManufacturer: string | null;
+  androidVersion: string | null;
+  sdkInt: number | null;
+  timezone: string | null;
+
+  uptimeSeconds: number | null;
+  memoryTotalMb: number | null;
+  memoryAvailableMb: number | null;
+  storageTotalGb: number | null;
+  storageFreeGb: number | null;
+  screenBrightness: number | null;
+
   lightLux: number | null;
+  soundScene: string | null;
+  soundConfidence: number | null;
+  motionState: string | null;
+
   latitude: number | null;
   longitude: number | null;
   scene: string | null;
+
   capturedAt: string;
   receivedAt: string;
 };
@@ -32,16 +56,35 @@ type WeatherState = {
   apparentTemperatureC: number | null;
   humidityPercent: number | null;
   precipitationMm: number | null;
+  precipitationProbabilityPercent: number | null;
   weatherCode: number | null;
   cloudCoverPercent: number | null;
+  visibilityM: number | null;
   windSpeedKmh: number | null;
+  windGustsKmh: number | null;
+  windDirectionDeg: number | null;
   isDay: boolean | null;
   summary: string | null;
+  sunrise: string | null;
+  sunset: string | null;
+  uvIndexMax: number | null;
+};
+
+type AirQualityState = {
+  europeanAqi: number | null;
+  usAqi: number | null;
+  pm25: number | null;
+  pm10: number | null;
+  ozone: number | null;
+  nitrogenDioxide: number | null;
 };
 
 let latestSensor: SensorState | null = null;
 let weatherCache:
   | { key: string; fetchedAtMs: number; value: WeatherState }
+  | null = null;
+let airCache:
+  | { key: string; fetchedAtMs: number; value: AirQualityState }
   | null = null;
 
 function secureTokenMatch(actualHeader: string | undefined, token: string | undefined) {
@@ -73,6 +116,32 @@ function lightSummary(lux: number | null) {
   return "很亮";
 }
 
+function batteryThermalSummary(temp: number | null) {
+  if (temp === null) return null;
+  if (temp < 10) return "偏冷";
+  if (temp < 35) return "温度正常";
+  if (temp < 42) return "有点热";
+  return "偏热";
+}
+
+function getResolvedLocation() {
+  if (latestSensor?.latitude !== null && latestSensor?.longitude !== null) {
+    return {
+      latitude: latestSensor.latitude,
+      longitude: latestSensor.longitude,
+      source: "phone" as const,
+    };
+  }
+  if (hasDefaultLocation()) {
+    return {
+      latitude: DEFAULT_LATITUDE,
+      longitude: DEFAULT_LONGITUDE,
+      source: "server_default" as const,
+    };
+  }
+  return null;
+}
+
 async function getWeather(lat: number, lon: number): Promise<WeatherState> {
   const roundedLat = Math.round(lat * 1000) / 1000;
   const roundedLon = Math.round(lon * 1000) / 1000;
@@ -87,8 +156,10 @@ async function getWeather(lat: number, lon: number): Promise<WeatherState> {
     latitude: String(lat),
     longitude: String(lon),
     current:
-      "temperature_2m,apparent_temperature,relative_humidity_2m,precipitation,weather_code,cloud_cover,wind_speed_10m,is_day",
+      "temperature_2m,apparent_temperature,relative_humidity_2m,precipitation,precipitation_probability,weather_code,cloud_cover,visibility,wind_speed_10m,wind_gusts_10m,wind_direction_10m,is_day",
+    daily: "sunrise,sunset,uv_index_max",
     timezone: "auto",
+    forecast_days: "1",
   });
 
   const response = await fetch(`https://api.open-meteo.com/v1/forecast?${params.toString()}`);
@@ -98,8 +169,14 @@ async function getWeather(lat: number, lon: number): Promise<WeatherState> {
 
   const body = (await response.json()) as {
     current?: Record<string, number | undefined>;
+    daily?: {
+      sunrise?: string[];
+      sunset?: string[];
+      uv_index_max?: number[];
+    };
   };
   const current = body.current ?? {};
+  const daily = body.daily ?? {};
   const code = typeof current.weather_code === "number" ? current.weather_code : null;
 
   const value: WeatherState = {
@@ -115,17 +192,98 @@ async function getWeather(lat: number, lon: number): Promise<WeatherState> {
         : null,
     precipitationMm:
       typeof current.precipitation === "number" ? current.precipitation : null,
+    precipitationProbabilityPercent:
+      typeof current.precipitation_probability === "number"
+        ? current.precipitation_probability
+        : null,
     weatherCode: code,
     cloudCoverPercent:
       typeof current.cloud_cover === "number" ? current.cloud_cover : null,
+    visibilityM:
+      typeof current.visibility === "number" ? current.visibility : null,
     windSpeedKmh:
       typeof current.wind_speed_10m === "number" ? current.wind_speed_10m : null,
+    windGustsKmh:
+      typeof current.wind_gusts_10m === "number" ? current.wind_gusts_10m : null,
+    windDirectionDeg:
+      typeof current.wind_direction_10m === "number" ? current.wind_direction_10m : null,
     isDay: typeof current.is_day === "number" ? current.is_day === 1 : null,
     summary: weatherSummary(code),
+    sunrise: Array.isArray(daily.sunrise) ? daily.sunrise[0] ?? null : null,
+    sunset: Array.isArray(daily.sunset) ? daily.sunset[0] ?? null : null,
+    uvIndexMax: Array.isArray(daily.uv_index_max)
+      ? daily.uv_index_max[0] ?? null
+      : null,
   };
 
   weatherCache = { key, fetchedAtMs: now, value };
   return value;
+}
+
+async function getAirQuality(lat: number, lon: number): Promise<AirQualityState> {
+  const roundedLat = Math.round(lat * 1000) / 1000;
+  const roundedLon = Math.round(lon * 1000) / 1000;
+  const key = `${roundedLat},${roundedLon}`;
+  const now = Date.now();
+
+  if (airCache && airCache.key === key && now - airCache.fetchedAtMs < 15 * 60_000) {
+    return airCache.value;
+  }
+
+  const params = new URLSearchParams({
+    latitude: String(lat),
+    longitude: String(lon),
+    current:
+      "european_aqi,us_aqi,pm2_5,pm10,ozone,nitrogen_dioxide",
+    timezone: "auto",
+  });
+
+  const response = await fetch(
+    `https://air-quality-api.open-meteo.com/v1/air-quality?${params.toString()}`,
+  );
+  if (!response.ok) {
+    throw new Error(`Air-quality request failed with HTTP ${response.status}`);
+  }
+
+  const body = (await response.json()) as {
+    current?: Record<string, number | undefined>;
+  };
+  const current = body.current ?? {};
+
+  const value: AirQualityState = {
+    europeanAqi:
+      typeof current.european_aqi === "number" ? current.european_aqi : null,
+    usAqi: typeof current.us_aqi === "number" ? current.us_aqi : null,
+    pm25: typeof current.pm2_5 === "number" ? current.pm2_5 : null,
+    pm10: typeof current.pm10 === "number" ? current.pm10 : null,
+    ozone: typeof current.ozone === "number" ? current.ozone : null,
+    nitrogenDioxide:
+      typeof current.nitrogen_dioxide === "number" ? current.nitrogen_dioxide : null,
+  };
+
+  airCache = { key, fetchedAtMs: now, value };
+  return value;
+}
+
+function dataFreshness() {
+  if (!latestSensor) {
+    return {
+      online: false,
+      stale: true,
+      ageSeconds: null,
+      lastSeenAt: null,
+    };
+  }
+  const ageSeconds = Math.max(
+    0,
+    Math.round((Date.now() - Date.parse(latestSensor.receivedAt)) / 1000),
+  );
+  return {
+    online: ageSeconds <= 180,
+    stale: ageSeconds > 600,
+    ageSeconds,
+    lastSeenAt: latestSensor.receivedAt,
+  };
 }
 
 async function buildSnapshot() {
@@ -133,49 +291,32 @@ async function buildSnapshot() {
     return {
       available: false,
       reason: "No sensor upload has been received yet.",
+      presence: dataFreshness(),
     };
   }
 
-  const ageSeconds = Math.max(
-    0,
-    Math.round((Date.now() - Date.parse(latestSensor.receivedAt)) / 1000),
-  );
-  const stale = ageSeconds > 10 * 60;
-
+  const loc = getResolvedLocation();
   let weather: WeatherState | null = null;
+  let airQuality: AirQualityState | null = null;
   let weatherError: string | null = null;
+  let airQualityError: string | null = null;
 
-  const weatherLat =
-    latestSensor.latitude !== null
-      ? latestSensor.latitude
-      : hasDefaultLocation()
-        ? DEFAULT_LATITUDE
-        : null;
-  const weatherLon =
-    latestSensor.longitude !== null
-      ? latestSensor.longitude
-      : hasDefaultLocation()
-        ? DEFAULT_LONGITUDE
-        : null;
-
-  if (weatherLat !== null && weatherLon !== null) {
+  if (loc) {
     try {
-      weather = await getWeather(weatherLat, weatherLon);
+      weather = await getWeather(loc.latitude, loc.longitude);
     } catch (error) {
       weatherError = error instanceof Error ? error.message : "Weather lookup failed";
     }
+    try {
+      airQuality = await getAirQuality(loc.latitude, loc.longitude);
+    } catch (error) {
+      airQualityError =
+        error instanceof Error ? error.message : "Air-quality lookup failed";
+    }
   }
 
-  const roundedLocation =
-    latestSensor.latitude !== null && latestSensor.longitude !== null
-      ? {
-          latitude: Math.round(latestSensor.latitude * 1000) / 1000,
-          longitude: Math.round(latestSensor.longitude * 1000) / 1000,
-        }
-      : null;
-
-  const feelParts: string[] = [];
   const light = lightSummary(latestSensor.lightLux);
+  const feelParts: string[] = [];
   if (light) feelParts.push(`周围光线${light}`);
   if (weather?.summary) feelParts.push(`外面是${weather.summary}`);
   if (weather?.apparentTemperatureC !== null && weather?.apparentTemperatureC !== undefined) {
@@ -184,42 +325,91 @@ async function buildSnapshot() {
   if (weather?.humidityPercent !== null && weather?.humidityPercent !== undefined) {
     feelParts.push(`湿度${weather.humidityPercent}%`);
   }
+  const thermal = batteryThermalSummary(latestSensor.batteryTemperatureC);
+  if (thermal) feelParts.push(`手机电池${thermal}`);
 
   return {
     available: true,
-    stale,
-    ageSeconds,
+    presence: dataFreshness(),
     scene: latestSensor.scene ?? DEFAULT_SCENE,
     capturedAt: latestSensor.capturedAt,
-    receivedAt: latestSensor.receivedAt,
     device: {
-      batteryPercent: latestSensor.batteryPercent,
+      model: latestSensor.deviceModel,
+      manufacturer: latestSensor.deviceManufacturer,
+      androidVersion: latestSensor.androidVersion,
+      sdkInt: latestSensor.sdkInt,
+      timezone: latestSensor.timezone,
+      uptimeSeconds: latestSensor.uptimeSeconds,
+      memoryTotalMb: latestSensor.memoryTotalMb,
+      memoryAvailableMb: latestSensor.memoryAvailableMb,
+      storageTotalGb: latestSensor.storageTotalGb,
+      storageFreeGb: latestSensor.storageFreeGb,
+      screenBrightness: latestSensor.screenBrightness,
+    },
+    battery: {
+      percent: latestSensor.batteryPercent,
       charging: latestSensor.charging,
+      health: latestSensor.batteryHealth,
+      plugged: latestSensor.batteryPlugged,
+      status: latestSensor.batteryStatus,
+      temperatureC: latestSensor.batteryTemperatureC,
+      thermalDescription: thermal,
+      currentUa: latestSensor.batteryCurrentUa,
     },
     ambient: {
       lightLux: latestSensor.lightLux,
       lightDescription: light,
+      soundScene: latestSensor.soundScene,
+      soundConfidence: latestSensor.soundConfidence,
+      motionState: latestSensor.motionState,
     },
-    location: roundedLocation,
-    weatherLocationSource:
-      latestSensor.latitude !== null && latestSensor.longitude !== null
-        ? "phone"
-        : hasDefaultLocation()
-          ? "server_default"
-          : null,
+    location: latestSensor.latitude !== null && latestSensor.longitude !== null
+      ? {
+          latitude: Math.round(latestSensor.latitude * 1000) / 1000,
+          longitude: Math.round(latestSensor.longitude * 1000) / 1000,
+        }
+      : null,
+    environmentLocationSource: loc?.source ?? null,
     weather,
     weatherError,
+    airQuality,
+    airQualityError,
     feelHint: feelParts.length ? feelParts.join("，") : null,
     privacyNote:
-      "Coordinates exposed to ChatGPT are rounded to 3 decimals; exact uploaded coordinates stay server-side.",
+      "Phone-provided coordinates are rounded before exposure to ChatGPT. Future sound sensing is designed to upload classification labels, not raw audio.",
   };
 }
+
+const optionalString = z.string().trim().min(1).max(120).optional();
 
 const sensorInput = z
   .object({
     batteryPercent: z.number().min(0).max(100).optional(),
     charging: z.boolean().optional(),
-    lightLux: z.number().min(0).max(200000).optional(),
+    batteryHealth: optionalString,
+    batteryPlugged: optionalString,
+    batteryStatus: optionalString,
+    batteryTemperatureC: z.number().min(-30).max(100).optional(),
+    batteryCurrentUa: z.number().min(-20_000_000).max(20_000_000).optional(),
+
+    deviceModel: optionalString,
+    deviceManufacturer: optionalString,
+    androidVersion: optionalString,
+    sdkInt: z.number().int().min(1).max(1000).optional(),
+    timezone: optionalString,
+
+    uptimeSeconds: z.number().min(0).optional(),
+    memoryTotalMb: z.number().min(0).optional(),
+    memoryAvailableMb: z.number().min(0).optional(),
+    storageTotalGb: z.number().min(0).optional(),
+    storageFreeGb: z.number().min(0).optional(),
+    screenBrightness: z.number().min(0).max(1000).optional(),
+
+    lightLux: z.number().min(0).max(500000).optional(),
+    soundScene: optionalString,
+    soundConfidence: z.number().min(0).max(1).optional(),
+    motionState: optionalString,
+
     latitude: z.number().min(-90).max(90).optional(),
     longitude: z.number().min(-180).max(180).optional(),
     scene: z.string().trim().min(1).max(80).optional(),
@@ -234,23 +424,59 @@ const sensorInput = z
         message: "latitude and longitude must be provided together",
       });
     }
-    if (
-      value.batteryPercent === undefined &&
-      value.charging === undefined &&
-      value.lightLux === undefined &&
-      !hasLat &&
-      value.scene === undefined
-    ) {
-      ctx.addIssue({
-        code: "custom",
-        message: "at least one sensor field is required",
-      });
-    }
   });
+
+function mergeSensor(incoming: z.infer<typeof sensorInput>, now: string): SensorState {
+  const old = latestSensor;
+  return {
+    batteryPercent: incoming.batteryPercent ?? old?.batteryPercent ?? null,
+    charging: incoming.charging ?? old?.charging ?? null,
+    batteryHealth: incoming.batteryHealth ?? old?.batteryHealth ?? null,
+    batteryPlugged: incoming.batteryPlugged ?? old?.batteryPlugged ?? null,
+    batteryStatus: incoming.batteryStatus ?? old?.batteryStatus ?? null,
+    batteryTemperatureC:
+      incoming.batteryTemperatureC ?? old?.batteryTemperatureC ?? null,
+    batteryCurrentUa: incoming.batteryCurrentUa ?? old?.batteryCurrentUa ?? null,
+
+    deviceModel: incoming.deviceModel ?? old?.deviceModel ?? null,
+    deviceManufacturer:
+      incoming.deviceManufacturer ?? old?.deviceManufacturer ?? null,
+    androidVersion: incoming.androidVersion ?? old?.androidVersion ?? null,
+    sdkInt: incoming.sdkInt ?? old?.sdkInt ?? null,
+    timezone: incoming.timezone ?? old?.timezone ?? null,
+
+    uptimeSeconds: incoming.uptimeSeconds ?? old?.uptimeSeconds ?? null,
+    memoryTotalMb: incoming.memoryTotalMb ?? old?.memoryTotalMb ?? null,
+    memoryAvailableMb:
+      incoming.memoryAvailableMb ?? old?.memoryAvailableMb ?? null,
+    storageTotalGb: incoming.storageTotalGb ?? old?.storageTotalGb ?? null,
+    storageFreeGb: incoming.storageFreeGb ?? old?.storageFreeGb ?? null,
+    screenBrightness:
+      incoming.screenBrightness ?? old?.screenBrightness ?? null,
+
+    lightLux: incoming.lightLux ?? old?.lightLux ?? null,
+    soundScene: incoming.soundScene ?? old?.soundScene ?? null,
+    soundConfidence: incoming.soundConfidence ?? old?.soundConfidence ?? null,
+    motionState: incoming.motionState ?? old?.motionState ?? null,
+
+    latitude: incoming.latitude ?? old?.latitude ?? null,
+    longitude: incoming.longitude ?? old?.longitude ?? null,
+    scene: incoming.scene ?? old?.scene ?? null,
+
+    capturedAt: incoming.capturedAt ?? now,
+    receivedAt: now,
+  };
+}
+
+function textResult(value: unknown) {
+  return {
+    content: [{ type: "text" as const, text: JSON.stringify(value, null, 2) }],
+  };
+}
 
 export function createServer(): McpServer {
   const server = new McpServer(
-    { name: "lr-sense", version: "0.1.0" },
+    { name: "lr-sense", version: "0.2.0" },
     { capabilities: { logging: {} } },
   );
 
@@ -258,20 +484,179 @@ export function createServer(): McpServer {
     "get_environment_snapshot",
     {
       description:
-        "Read the user's latest headless phone environment snapshot: battery, charging state, ambient light, coarse location, current weather, data freshness, and a short sensory hint. Use when the user asks about their surroundings, phone battery, room brightness, local weather context, or wants environment-aware conversation. This tool is read-only.",
+        "Read a comprehensive current snapshot: phone presence, battery, device vitals, ambient sensing, coarse location if available, weather, air quality, daylight, and a sensory summary. Read-only.",
+      inputSchema: {},
+    },
+    async () => textResult(await buildSnapshot()),
+  );
+
+  server.registerTool(
+    "get_device_state",
+    {
+      description:
+        "Read current phone/device state: battery percentage, charging source/status, battery health/temperature/current, device model, Android version, uptime, memory, storage, brightness when available, and last-seen freshness. Read-only.",
       inputSchema: {},
     },
     async () => {
-      const snapshot = await buildSnapshot();
-      return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify(snapshot, null, 2),
-          },
-        ],
-      };
+      if (!latestSensor) return textResult({ available: false, presence: dataFreshness() });
+      return textResult({
+        available: true,
+        presence: dataFreshness(),
+        device: {
+          model: latestSensor.deviceModel,
+          manufacturer: latestSensor.deviceManufacturer,
+          androidVersion: latestSensor.androidVersion,
+          sdkInt: latestSensor.sdkInt,
+          timezone: latestSensor.timezone,
+          uptimeSeconds: latestSensor.uptimeSeconds,
+          memoryTotalMb: latestSensor.memoryTotalMb,
+          memoryAvailableMb: latestSensor.memoryAvailableMb,
+          storageTotalGb: latestSensor.storageTotalGb,
+          storageFreeGb: latestSensor.storageFreeGb,
+          screenBrightness: latestSensor.screenBrightness,
+        },
+        battery: {
+          percent: latestSensor.batteryPercent,
+          charging: latestSensor.charging,
+          health: latestSensor.batteryHealth,
+          plugged: latestSensor.batteryPlugged,
+          status: latestSensor.batteryStatus,
+          temperatureC: latestSensor.batteryTemperatureC,
+          currentUa: latestSensor.batteryCurrentUa,
+        },
+      });
     },
+  );
+
+  server.registerTool(
+    "get_presence_status",
+    {
+      description:
+        "Check whether the phone collector is currently online, when it last uploaded, how old the latest snapshot is, and the current coarse scene label if configured. Read-only.",
+      inputSchema: {},
+    },
+    async () =>
+      textResult({
+        ...dataFreshness(),
+        scene: latestSensor?.scene ?? DEFAULT_SCENE,
+      }),
+  );
+
+  server.registerTool(
+    "get_weather_context",
+    {
+      description:
+        "Read current outdoor weather context for the configured or phone-provided coarse location: temperature, apparent temperature, humidity, precipitation, cloud cover, visibility, wind, gusts, day/night, sunrise, sunset and UV. Read-only.",
+      inputSchema: {},
+    },
+    async () => {
+      const loc = getResolvedLocation();
+      if (!loc) {
+        return textResult({
+          available: false,
+          reason: "No phone location or server default location is configured yet.",
+        });
+      }
+      try {
+        return textResult({
+          available: true,
+          locationSource: loc.source,
+          weather: await getWeather(loc.latitude, loc.longitude),
+        });
+      } catch (error) {
+        return textResult({
+          available: false,
+          error: error instanceof Error ? error.message : "Weather lookup failed",
+        });
+      }
+    },
+  );
+
+  server.registerTool(
+    "get_air_quality_context",
+    {
+      description:
+        "Read outdoor air-quality context for the configured or phone-provided coarse location: AQI, PM2.5, PM10, ozone and nitrogen dioxide. Read-only.",
+      inputSchema: {},
+    },
+    async () => {
+      const loc = getResolvedLocation();
+      if (!loc) {
+        return textResult({
+          available: false,
+          reason: "No phone location or server default location is configured yet.",
+        });
+      }
+      try {
+        return textResult({
+          available: true,
+          locationSource: loc.source,
+          airQuality: await getAirQuality(loc.latitude, loc.longitude),
+        });
+      } catch (error) {
+        return textResult({
+          available: false,
+          error: error instanceof Error ? error.message : "Air-quality lookup failed",
+        });
+      }
+    },
+  );
+
+  server.registerTool(
+    "get_ambient_light",
+    {
+      description:
+        "Read the latest ambient-light lux and human-friendly brightness label. Tool is reserved now even if the current phone collector cannot provide light yet; a future sensor uploader can populate it without changing the plugin tool list.",
+      inputSchema: {},
+    },
+    async () =>
+      textResult({
+        available: latestSensor?.lightLux !== null && latestSensor?.lightLux !== undefined,
+        lightLux: latestSensor?.lightLux ?? null,
+        description: lightSummary(latestSensor?.lightLux ?? null),
+        note:
+          latestSensor?.lightLux === null || latestSensor?.lightLux === undefined
+            ? "Reserved for the future Android sensor uploader."
+            : null,
+      }),
+  );
+
+  server.registerTool(
+    "get_sound_scene",
+    {
+      description:
+        "Read a privacy-preserving ambient sound classification such as quiet, music, speech or rain. Reserved now; future Android code should upload labels/confidence only, not raw audio, so the plugin tool can stay unchanged.",
+      inputSchema: {},
+    },
+    async () =>
+      textResult({
+        available: latestSensor?.soundScene !== null && latestSensor?.soundScene !== undefined,
+        scene: latestSensor?.soundScene ?? null,
+        confidence: latestSensor?.soundConfidence ?? null,
+        rawAudioStored: false,
+        note:
+          latestSensor?.soundScene === null || latestSensor?.soundScene === undefined
+            ? "Reserved for the future Android sound classifier."
+            : null,
+      }),
+  );
+
+  server.registerTool(
+    "get_motion_state",
+    {
+      description:
+        "Read a coarse future motion/activity label such as still, walking or moving. Reserved now so accelerometer/activity data can be added later without changing the plugin tool list.",
+      inputSchema: {},
+    },
+    async () =>
+      textResult({
+        available: latestSensor?.motionState !== null && latestSensor?.motionState !== undefined,
+        motionState: latestSensor?.motionState ?? null,
+        note:
+          latestSensor?.motionState === null || latestSensor?.motionState === undefined
+            ? "Reserved for the future Android motion sensor uploader."
+            : null,
+      }),
   );
 
   return server;
@@ -286,7 +671,9 @@ app.get("/health", (_req: Request, res: Response) => {
   res.json({
     status: "ok",
     service: "lr-sense",
+    version: "0.2.0",
     hasSensorData: latestSensor !== null,
+    presence: dataFreshness(),
   });
 });
 
@@ -332,22 +719,8 @@ app.post("/sensor/update", sensorAuth, (req: Request, res: Response) => {
     });
     return;
   }
-
   const now = new Date().toISOString();
-  const incoming = parsed.data;
-
-  latestSensor = {
-    batteryPercent:
-      incoming.batteryPercent ?? latestSensor?.batteryPercent ?? null,
-    charging: incoming.charging ?? latestSensor?.charging ?? null,
-    lightLux: incoming.lightLux ?? latestSensor?.lightLux ?? null,
-    latitude: incoming.latitude ?? latestSensor?.latitude ?? null,
-    longitude: incoming.longitude ?? latestSensor?.longitude ?? null,
-    scene: incoming.scene ?? latestSensor?.scene ?? null,
-    capturedAt: incoming.capturedAt ?? now,
-    receivedAt: now,
-  };
-
+  latestSensor = mergeSensor(parsed.data, now);
   res.json({ ok: true, receivedAt: now });
 });
 
