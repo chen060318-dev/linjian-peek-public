@@ -719,7 +719,11 @@ function mcpPathAuth(req: Request, res: Response, next: NextFunction) {
     });
     return;
   }
-  if (!secureRawMatch(req.params.secret, MCP_URL_SECRET)) {
+
+  const rawSecret = req.params.secret;
+  const secret = Array.isArray(rawSecret) ? rawSecret[0] : rawSecret;
+
+  if (!secureRawMatch(secret, MCP_URL_SECRET)) {
     res.status(404).json({
       jsonrpc: "2.0",
       error: { code: -32003, message: "Not found" },
