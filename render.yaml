@@ -3,13 +3,11 @@ services:
     name: lr-sense-0714
     runtime: node
     plan: free
-    region: singapore
-    branch: lr-sense-service
     rootDir: lr-sense
     buildCommand: npm install --include=dev && npm run build
     startCommand: npm start
     healthCheckPath: /health
-    autoDeployTrigger: commit
+    autoDeployTrigger: off
     envVars:
       - key: MCP_API_TOKEN
         generateValue: true
