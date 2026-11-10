@@ -20,6 +20,7 @@
         android:allowBackup="false"
         android:label="感知你"
         android:icon="@drawable/icon_source"
+        android:roundIcon="@drawable/icon_source"
         android:theme="@android:style/Theme.Material.Light.NoActionBar"
         android:usesCleartextTraffic="false">
 
