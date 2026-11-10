@@ -18,7 +18,8 @@
 
     <application
         android:allowBackup="false"
-        android:label="LR Sense Sensor"
+        android:label="感知你"
+        android:icon="@drawable/ic_lr_sense"
         android:theme="@android:style/Theme.Material.Light.NoActionBar"
         android:usesCleartextTraffic="false">
 
