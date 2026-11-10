@@ -9,12 +9,19 @@ const MCP_API_TOKEN = process.env.MCP_API_TOKEN;
 const MCP_URL_SECRET = process.env.MCP_URL_SECRET;
 const SENSOR_API_TOKEN = process.env.SENSOR_API_TOKEN;
 const RENDER_EXTERNAL_HOSTNAME = process.env.RENDER_EXTERNAL_HOSTNAME;
-const DEFAULT_LATITUDE = Number(process.env.DEFAULT_LATITUDE ?? "");
-const DEFAULT_LONGITUDE = Number(process.env.DEFAULT_LONGITUDE ?? "");
+const DEFAULT_LATITUDE_RAW = process.env.DEFAULT_LATITUDE?.trim() || null;
+const DEFAULT_LONGITUDE_RAW = process.env.DEFAULT_LONGITUDE?.trim() || null;
+const DEFAULT_LATITUDE = DEFAULT_LATITUDE_RAW === null ? NaN : Number(DEFAULT_LATITUDE_RAW);
+const DEFAULT_LONGITUDE = DEFAULT_LONGITUDE_RAW === null ? NaN : Number(DEFAULT_LONGITUDE_RAW);
 const DEFAULT_SCENE = process.env.DEFAULT_SCENE?.trim() || null;
 
 function hasDefaultLocation() {
-  return Number.isFinite(DEFAULT_LATITUDE) && Number.isFinite(DEFAULT_LONGITUDE);
+  return (
+    DEFAULT_LATITUDE_RAW !== null &&
+    DEFAULT_LONGITUDE_RAW !== null &&
+    Number.isFinite(DEFAULT_LATITUDE) &&
+    Number.isFinite(DEFAULT_LONGITUDE)
+  );
 }
 
 type SensorState = {
