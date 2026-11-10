@@ -19,7 +19,7 @@
     <application
         android:allowBackup="false"
         android:label="感知你"
-        android:icon="@drawable/ic_lr_sense"
+        android:icon="@drawable/icon_source"
         android:theme="@android:style/Theme.Material.Light.NoActionBar"
         android:usesCleartextTraffic="false">
 
