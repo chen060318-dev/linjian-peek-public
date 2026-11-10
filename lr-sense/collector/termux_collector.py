@@ -12,6 +12,8 @@ TOKEN = os.environ.get("SENSOR_API_TOKEN", "")
 SCENE = os.environ.get("LR_SCENE", "")
 UPLOAD_INTERVAL = int(os.environ.get("LR_UPLOAD_INTERVAL", "60"))
 LOCATION_INTERVAL = int(os.environ.get("LR_LOCATION_INTERVAL", "300"))
+ENABLE_LIGHT = os.environ.get("LR_ENABLE_LIGHT", "0") == "1"
+ENABLE_LOCATION = os.environ.get("LR_ENABLE_LOCATION", "0") == "1"
 
 if not BASE_URL or not TOKEN:
     raise SystemExit(
@@ -94,9 +96,10 @@ while True:
     started = time.time()
     payload = {}
     payload.update(read_battery())
-    payload.update(read_light())
+    if ENABLE_LIGHT:
+        payload.update(read_light())
 
-    if not last_location or started - last_location_at >= LOCATION_INTERVAL:
+    if ENABLE_LOCATION and (not last_location or started - last_location_at >= LOCATION_INTERVAL):
         fresh_location = read_location()
         if fresh_location:
             last_location = fresh_location
