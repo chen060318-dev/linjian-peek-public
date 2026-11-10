@@ -6,6 +6,7 @@ import { timingSafeEqual } from "node:crypto";
 import { z } from "zod/v4";
 
 const MCP_API_TOKEN = process.env.MCP_API_TOKEN;
+const MCP_URL_SECRET = process.env.MCP_URL_SECRET;
 const SENSOR_API_TOKEN = process.env.SENSOR_API_TOKEN;
 const RENDER_EXTERNAL_HOSTNAME = process.env.RENDER_EXTERNAL_HOSTNAME;
 const DEFAULT_LATITUDE = Number(process.env.DEFAULT_LATITUDE ?? "");
@@ -92,6 +93,12 @@ function secureTokenMatch(actualHeader: string | undefined, token: string | unde
   const expected = `Bearer ${token}`;
   if (actualHeader.length !== expected.length) return false;
   return timingSafeEqual(Buffer.from(actualHeader), Buffer.from(expected));
+}
+
+function secureRawMatch(actual: string | undefined, expected: string | undefined) {
+  if (!actual || !expected) return false;
+  if (actual.length !== expected.length) return false;
+  return timingSafeEqual(Buffer.from(actual), Buffer.from(expected));
 }
 
 function weatherSummary(code: number | null): string | null {
@@ -693,6 +700,26 @@ function sensorAuth(req: Request, res: Response, next: NextFunction) {
   next();
 }
 
+function mcpPathAuth(req: Request, res: Response, next: NextFunction) {
+  if (!MCP_URL_SECRET) {
+    res.status(503).json({
+      jsonrpc: "2.0",
+      error: { code: -32004, message: "MCP_URL_SECRET is not configured" },
+      id: null,
+    });
+    return;
+  }
+  if (!secureRawMatch(req.params.secret, MCP_URL_SECRET)) {
+    res.status(404).json({
+      jsonrpc: "2.0",
+      error: { code: -32003, message: "Not found" },
+      id: null,
+    });
+    return;
+  }
+  next();
+}
+
 function mcpAuth(req: Request, res: Response, next: NextFunction) {
   if (!MCP_API_TOKEN) {
     res.status(503).json({
@@ -728,7 +755,7 @@ app.post("/sensor/update", sensorAuth, (req: Request, res: Response) => {
   res.json({ ok: true, receivedAt: now });
 });
 
-app.post("/mcp", mcpAuth, async (req: Request, res: Response) => {
+async function handleMcpRequest(req: Request, res: Response) {
   const server = createServer();
   try {
     const transport = new StreamableHTTPServerTransport({
@@ -750,6 +777,25 @@ app.post("/mcp", mcpAuth, async (req: Request, res: Response) => {
       });
     }
   }
+}
+
+app.post("/mcp", mcpAuth, handleMcpRequest);
+app.post("/mcp/:secret", mcpPathAuth, handleMcpRequest);
+
+app.get("/mcp/:secret", mcpPathAuth, (_req: Request, res: Response) => {
+  res.status(405).json({
+    jsonrpc: "2.0",
+    error: { code: -32000, message: "Method not allowed" },
+    id: null,
+  });
+});
+
+app.delete("/mcp/:secret", mcpPathAuth, (_req: Request, res: Response) => {
+  res.status(405).json({
+    jsonrpc: "2.0",
+    error: { code: -32000, message: "Method not allowed" },
+    id: null,
+  });
 });
 
 app.get("/mcp", (_req: Request, res: Response) => {
