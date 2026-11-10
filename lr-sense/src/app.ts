@@ -125,7 +125,11 @@ function batteryThermalSummary(temp: number | null) {
 }
 
 function getResolvedLocation() {
-  if (latestSensor?.latitude !== null && latestSensor?.longitude !== null) {
+  if (
+    latestSensor &&
+    latestSensor.latitude !== null &&
+    latestSensor.longitude !== null
+  ) {
     return {
       latitude: latestSensor.latitude,
       longitude: latestSensor.longitude,
