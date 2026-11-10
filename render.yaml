@@ -1,68 +1,21 @@
-# Render Blueprint for 掌心窗安全只读版 v0.4.0
-# 一键部署会创建两个服务：手机端后端 server + MCP 服务。
-# 部署后：
-# - 手机 App 填 zhangxinchuang-server 的外部地址。
-# - AI/MCP 客户端填 zhangxinchuang-mcp 的 /mcp 或 /sse 地址。
-#
-# v0.3.6.6 修正：MCP 的 LINJIAN_URL 不再使用 Render 内网 hostport，
-# 而是自动引用 server 服务的公网 RENDER_EXTERNAL_URL。
-# 如果旧用户只重新部署 MCP、没有同步 Blueprint，新版 MCP 代码也会把旧 hostport
-# 自动兜底为 https://<server-host>.onrender.com，不需要手动填写 server URL。
-
-envVarGroups:
-  - name: zhangxinchuang-public-shared
-    envVars:
-      - key: LINJIAN_TOKEN
-        generateValue: true
-      - key: LINJIAN_DEFAULT_DEVICE
-        value: android-phone
-
 services:
   - type: web
-    name: zhangxinchuang-server
-    runtime: python
-    plan: free
-    rootDir: server
-    buildCommand: python -m unittest discover -s tests -v
-    startCommand: python linjian_server.py
-    envVars:
-      - fromGroup: zhangxinchuang-public-shared
-      - key: LINJIAN_HOST
-        value: 0.0.0.0
-      - key: LINJIAN_KEEP
-        value: 3
-
-  - type: web
-    name: zhangxinchuang-mcp
+    name: lr-sense-0714
     runtime: node
     plan: free
-    rootDir: mcp
-    buildCommand: npm ci && npm test
+    region: singapore
+    branch: lr-sense-service
+    rootDir: lr-sense
+    buildCommand: npm install --include=dev && npm run build
     startCommand: npm start
+    healthCheckPath: /health
+    autoDeployTrigger: commit
     envVars:
-      - fromGroup: zhangxinchuang-public-shared
-      # 自动取 server 的公网 HTTPS 地址，例如 https://zhangxinchuang-server-xxxx.onrender.com
-      # 不再取 property: hostport，避免部分环境下 MCP 访问 Render 内网地址 fetch failed。
-      - key: LINJIAN_URL
-        fromService:
-          type: web
-          name: zhangxinchuang-server
-          envVarKey: RENDER_EXTERNAL_URL
-      # ChatGPT 用户认证与手机同步 Token 完全分离。
-      # 首次 Blueprint 确认页会要求填写 Auth0/其他 OAuth 2.1 提供方的 issuer。
-      - key: MCP_OAUTH_ISSUER
-        sync: false
-      # 默认以 Render 自动提供的本服务公网 URL 作为 OAuth audience/resource。
-      - key: MCP_OAUTH_READ_SCOPE
-        value: phone.read
-      - key: MCP_OAUTH_CONTROL_SCOPE
-        value: phone.control
-      # 安全默认值：只注册手机状态与应用时长工具。
-      - key: MCP_ENABLE_SENSITIVE_TOOLS
-        value: "false"
-      # Optional limited companion features (diaries, activity history, wallet approval); never enables screen control.
-      - key: MCP_ENABLE_COMPANION_TOOLS
-        value: "false"
-      - key: MCP_ENABLE_WALLET_TOOLS
-        value: "false"
-
+      - key: MCP_API_TOKEN
+        generateValue: true
+      - key: SENSOR_API_TOKEN
+        generateValue: true
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: "10000"
