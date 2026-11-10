@@ -8,6 +8,13 @@ import { z } from "zod/v4";
 const MCP_API_TOKEN = process.env.MCP_API_TOKEN;
 const SENSOR_API_TOKEN = process.env.SENSOR_API_TOKEN;
 const RENDER_EXTERNAL_HOSTNAME = process.env.RENDER_EXTERNAL_HOSTNAME;
+const DEFAULT_LATITUDE = Number(process.env.DEFAULT_LATITUDE ?? "");
+const DEFAULT_LONGITUDE = Number(process.env.DEFAULT_LONGITUDE ?? "");
+const DEFAULT_SCENE = process.env.DEFAULT_SCENE?.trim() || null;
+
+function hasDefaultLocation() {
+  return Number.isFinite(DEFAULT_LATITUDE) && Number.isFinite(DEFAULT_LONGITUDE);
+}
 
 type SensorState = {
   batteryPercent: number | null;
@@ -138,9 +145,22 @@ async function buildSnapshot() {
   let weather: WeatherState | null = null;
   let weatherError: string | null = null;
 
-  if (latestSensor.latitude !== null && latestSensor.longitude !== null) {
+  const weatherLat =
+    latestSensor.latitude !== null
+      ? latestSensor.latitude
+      : hasDefaultLocation()
+        ? DEFAULT_LATITUDE
+        : null;
+  const weatherLon =
+    latestSensor.longitude !== null
+      ? latestSensor.longitude
+      : hasDefaultLocation()
+        ? DEFAULT_LONGITUDE
+        : null;
+
+  if (weatherLat !== null && weatherLon !== null) {
     try {
-      weather = await getWeather(latestSensor.latitude, latestSensor.longitude);
+      weather = await getWeather(weatherLat, weatherLon);
     } catch (error) {
       weatherError = error instanceof Error ? error.message : "Weather lookup failed";
     }
@@ -169,7 +189,7 @@ async function buildSnapshot() {
     available: true,
     stale,
     ageSeconds,
-    scene: latestSensor.scene,
+    scene: latestSensor.scene ?? DEFAULT_SCENE,
     capturedAt: latestSensor.capturedAt,
     receivedAt: latestSensor.receivedAt,
     device: {
@@ -181,6 +201,12 @@ async function buildSnapshot() {
       lightDescription: light,
     },
     location: roundedLocation,
+    weatherLocationSource:
+      latestSensor.latitude !== null && latestSensor.longitude !== null
+        ? "phone"
+        : hasDefaultLocation()
+          ? "server_default"
+          : null,
     weather,
     weatherError,
     feelHint: feelParts.length ? feelParts.join("，") : null,
