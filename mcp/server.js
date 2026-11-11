@@ -1247,7 +1247,7 @@ function makeServer({ allowedToolNames = null, principal = {} } = {}) {
   }
 
   function wechatCoordHint(raw, key) {
-    const m = String(raw || "").match(new RegExp("(?:^|\\\\|)" + key + "=(\\\\d{1,4}),(\\\\d{1,4})(?:\\\\||$)"));
+    const m = String(raw || "").match(new RegExp("(?:^|\\|)" + key + "=(\\d{1,4}),(\\d{1,4})(?:\\||$)"));
     if (!m) return null;
     return { x: Number(m[1]), y: Number(m[2]) };
   }
