@@ -258,3 +258,30 @@ test("read-only OAuth client can discover companion step-up without access to wr
   assert.match(result, /insufficient_scope/);
   assert.match(result, /phone.control/);
 });
+
+
+test("dedicated douyin endpoint exposes only constrained douyin tools", async () => {
+  const accessToken = await token("phone.read phone.control");
+  const response = await fetch(`${audience}/mcp-douyin`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${accessToken}`,
+      "content-type": "application/json",
+      accept: "application/json, text/event-stream"
+    },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 120, method: "tools/list", params: {} })
+  });
+  assert.equal(response.status, 200);
+  const body = await response.text();
+  for (const enabled of [
+    "douyin_open_messages",
+    "douyin_open_chat",
+    "douyin_check_streak",
+    "douyin_draft_message",
+    "douyin_send_message"
+  ]) assert.match(body, new RegExp(enabled), `expected ${enabled}`);
+  for (const disabled of [
+    "tap_text", "input_text", "send_phone_command", "open_app",
+    "xhs_comment", "prepare_takeout_checkout", "delete_wallet_record"
+  ]) assert.doesNotMatch(body, new RegExp(`"name":"${disabled}"`), `unexpected ${disabled}`);
+});
