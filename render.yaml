@@ -36,6 +36,7 @@ services:
     name: zhangxinchuang-mcp
     runtime: node
     plan: free
+    autoDeployTrigger: commit
     rootDir: mcp
     buildCommand: npm ci && npm test
     startCommand: npm start
