@@ -48,6 +48,8 @@ public class SenseService extends Service implements SensorEventListener, Locati
     private final Handler handler = new Handler(Looper.getMainLooper());
 
     private Float lightLux = null;
+    private final java.util.Map<String, Float> lightReadings = new java.util.HashMap<>();
+    private int lightSensorCount = 0;
     private float lastAccelMag = Float.NaN;
     private float movementScore = 0f;
     private Location lastLocation;
@@ -63,8 +65,13 @@ public class SenseService extends Service implements SensorEventListener, Locati
         startForeground(NOTIFICATION_ID, buildNotification("正在感知环境"));
 
         sensorManager = (SensorManager) getSystemService(SENSOR_SERVICE);
-        Sensor light = sensorManager.getDefaultSensor(Sensor.TYPE_LIGHT);
-        if (light != null) sensorManager.registerListener(this, light, SensorManager.SENSOR_DELAY_NORMAL);
+        java.util.List<Sensor> lights = sensorManager.getSensorList(Sensor.TYPE_LIGHT);
+        lightSensorCount = lights == null ? 0 : lights.size();
+        if (lights != null) {
+            for (Sensor light : lights) {
+                sensorManager.registerListener(this, light, SensorManager.SENSOR_DELAY_UI);
+            }
+        }
 
         Sensor accel = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER);
         if (accel != null) sensorManager.registerListener(this, accel, SensorManager.SENSOR_DELAY_NORMAL);
@@ -137,7 +144,20 @@ public class SenseService extends Service implements SensorEventListener, Locati
     @Override
     public void onSensorChanged(SensorEvent event) {
         if (event.sensor.getType() == Sensor.TYPE_LIGHT && event.values.length > 0) {
-            lightLux = event.values[0];
+            float value = event.values[0];
+            if (!Float.isNaN(value) && !Float.isInfinite(value) && value >= 0f) {
+                String key = event.sensor.getName() + "|" + event.sensor.getVendor();
+                lightReadings.put(key, value);
+                float best = 0f;
+                boolean have = false;
+                for (Float v : lightReadings.values()) {
+                    if (v != null && !Float.isNaN(v) && !Float.isInfinite(v) && v >= 0f) {
+                        if (!have || v > best) best = v;
+                        have = true;
+                    }
+                }
+                lightLux = have ? best : null;
+            }
             return;
         }
 
@@ -269,7 +289,7 @@ public class SenseService extends Service implements SensorEventListener, Locati
 
                 int code = conn.getResponseCode();
                 String note = code >= 200 && code < 300
-                    ? "已连接 · 环境光 " + (lightLux == null ? "等待传感器" : Math.round(lightLux) + " lux")
+                    ? "已连接 · 光感" + lightSensorCount + "颗 · " + (lightLux == null ? "等待读数" : Math.round(lightLux) + " lux")
                     : "上传失败 HTTP " + code;
 
                 final String finalNote = note;
