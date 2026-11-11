@@ -21,6 +21,7 @@ public class MainActivity extends Activity {
     private EditText endpointInput;
     private EditText tokenInput;
     private CheckBox locationBox;
+    private CheckBox actionSyncBox;
     private TextView statusView;
 
     private SharedPreferences prefs() {
@@ -84,6 +85,25 @@ public class MainActivity extends Activity {
         locationBox.setPadding(0, 18, 0, 18);
         root.addView(locationBox);
 
+        actionSyncBox = new CheckBox(this);
+        actionSyncBox.setText("开启行动同步（耳机、屏幕、前台 App、使用时长）");
+        actionSyncBox.setChecked(p.getBoolean("action_sync_enabled", true));
+        actionSyncBox.setPadding(0, 6, 0, 12);
+        root.addView(actionSyncBox);
+
+        Button usageAccess = new Button(this);
+        usageAccess.setText("授权 App 使用情况访问");
+        usageAccess.setOnClickListener(v -> {
+            try {
+                startActivity(new Intent(android.provider.Settings.ACTION_USAGE_ACCESS_SETTINGS));
+                statusView.setText("请在系统页面找到“感知你”，允许使用情况访问，然后返回这里点“开始感知”");
+            } catch (Exception e) {
+                statusView.setText("无法打开使用情况访问设置，请在系统设置里搜索“使用情况访问权限”");
+            }
+        });
+        root.addView(usageAccess, new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
         Button start = new Button(this);
         start.setText("开始感知");
         start.setOnClickListener(v -> saveAndStart());
@@ -99,7 +119,7 @@ public class MainActivity extends Activity {
         root.addView(stop, new LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
-        statusView = text("环境光与运动状态不会上传原始传感器流，只上传最新数值/分类。", 13);
+        statusView = text("环境光与运动状态不会上传原始传感器流；行动同步只上传设备状态、包名和使用时长，不读取 App 内容。", 13);
         root.addView(statusView);
 
         setContentView(root);
@@ -118,6 +138,7 @@ public class MainActivity extends Activity {
             .putString("endpoint", endpoint.replaceAll("/+$", ""))
             .putString("token", token)
             .putBoolean("location_enabled", locationBox.isChecked())
+            .putBoolean("action_sync_enabled", actionSyncBox.isChecked())
             .apply();
 
         java.util.ArrayList<String> needed = new java.util.ArrayList<>();
