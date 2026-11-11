@@ -1538,6 +1538,38 @@ function makeServer({ allowedToolNames = null, principal = {} } = {}) {
     const focusPoint = wechatCoordHint(contact_text, "focus");
     const clipPoint = wechatCoordHint(contact_text, "clip");
     const sendPoint = wechatCoordHint(contact_text, "send");
+    const currentPoint = wechatCoordHint(contact_text, "current");
+
+    if (currentPoint && focusPoint && clipPoint && sendPoint) {
+      if (focusPoint.x < 80 || focusPoint.x > 980 || focusPoint.y < 700 || focusPoint.y > 2350) throw new Error("微信视觉输入框坐标超出安全范围");
+      if (clipPoint.x < 0 || clipPoint.x > 1080 || clipPoint.y < 700 || clipPoint.y > 2000) throw new Error("百度剪贴板卡片坐标超出安全范围");
+      if (sendPoint.x < 650 || sendPoint.x > 1080 || sendPoint.y < 900 || sendPoint.y > 1800) throw new Error("微信视觉发送键坐标超出安全范围");
+
+      const copied = await postCommand({ action: "copy_takeout_note", device_id, note: text, payload: { note: text } });
+      const copyId = copied?.command?.id;
+      const copyObserved = copyId ? await waitCommand(copyId, Math.min(10, wait_seconds)) : null;
+      if (copyObserved?.command?.status && copyObserved.command.status !== "completed") throw new Error("写入系统剪贴板失败");
+
+      const steps = [
+        { label: "激活当前微信输入框", action: "tap", x: focusPoint.x, y: focusPoint.y, wait_ms: 800 },
+        { label: "点击百度剪贴板内容卡片", action: "tap", x: clipPoint.x, y: clipPoint.y, wait_ms: 850 },
+        { label: "发送当前微信消息", action: "tap", x: sendPoint.x, y: sendPoint.y, wait_ms: 850 }
+      ];
+      const result = await postCommand({ action: "run_sequence", device_id, steps, payload: { steps, stop_on_error: true }, stop_on_error: true });
+      const id = result?.command?.id;
+      const observed = id ? await waitCommand(id, wait_seconds) : null;
+      return textResult({
+        queued: result,
+        clipboard_status: copyObserved?.command || null,
+        observed_status: observed?.command || null,
+        contact_text: label,
+        sent_text: text,
+        mode: "quick_current_chat",
+        focus_point: focusPoint,
+        clip_point: clipPoint,
+        send_point: sendPoint
+      });
+    }
 
     if (sendPoint && !focusPoint && !clipPoint) {
       if (sendPoint.x < 650 || sendPoint.x > 1080 || sendPoint.y < 900 || sendPoint.y > 1800) throw new Error("微信视觉发送键坐标超出安全范围");
