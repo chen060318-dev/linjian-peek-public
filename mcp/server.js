@@ -1375,6 +1375,7 @@ function makeServer({ allowedToolNames = null, principal = {} } = {}) {
     if (copyObserved?.command?.status && copyObserved.command.status !== "completed") throw new Error("写入系统剪贴板失败");
     const steps = [
       { label: "打开双开微信", action: "open_app_profile", app: "微信", package: "com.tencent.mm", index: 2, wait_ms: 2600 },
+      { label: "切换到文字键盘", action: "tap", x: 65, y: 2190, wait_ms: 900 },
       { label: "点微信输入框", action: "tap", x: inputPoint.x, y: inputPoint.y, wait_ms: 700 },
       { label: "长按微信输入框", action: "swipe", x1: inputPoint.x, y1: inputPoint.y, x2: inputPoint.x, y2: inputPoint.y, duration: 720, wait_ms: 650 }
     ];
@@ -1422,6 +1423,7 @@ function makeServer({ allowedToolNames = null, principal = {} } = {}) {
     const copyObserved = copyId ? await waitCommand(copyId, Math.min(10, wait_seconds)) : null;
     const steps = [
       { label: "打开双开微信", action: "open_app_profile", app: "微信", package: "com.tencent.mm", index: 2, wait_ms: 2600 },
+      { label: "切换到文字键盘", action: "tap", x: 65, y: 2190, wait_ms: 900 },
       { label: "点微信输入框", action: "tap", x: inputPoint.x, y: inputPoint.y, wait_ms: 700 },
       { label: "长按微信输入框", action: "swipe", x1: inputPoint.x, y1: inputPoint.y, x2: inputPoint.x, y2: inputPoint.y, duration: 720, wait_ms: 650 }
     ];
