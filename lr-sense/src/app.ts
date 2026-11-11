@@ -53,6 +53,15 @@ type SensorState = {
   soundConfidence: number | null;
   motionState: string | null;
 
+  actionSyncEnabled: boolean | null;
+  screenInteractive: boolean | null;
+  headphonesConnected: boolean | null;
+  audioRoute: string | null;
+  usageAccessGranted: boolean | null;
+  foregroundApp: string | null;
+  foregroundAppMinutes24h: number | null;
+  topApps24h: string | null;
+
   latitude: number | null;
   longitude: number | null;
   scene: string | null;
@@ -138,6 +147,46 @@ function batteryThermalSummary(temp: number | null) {
   if (temp < 35) return "温度正常";
   if (temp < 42) return "有点热";
   return "偏热";
+}
+
+function inferActivityContext(sensor: SensorState | null) {
+  if (!sensor || sensor.actionSyncEnabled === false) return null;
+
+  const app = (sensor.foregroundApp ?? "").toLowerCase();
+  const moving = sensor.motionState === "moving" || sensor.motionState === "active";
+  const active = sensor.motionState === "active";
+  const headset = sensor.headphonesConnected === true;
+  const screen = sensor.screenInteractive === true;
+  const charging = sensor.charging === true;
+
+  if (headset && (app.includes("cloudmusic") || app.includes("music"))) {
+    return { state: moving ? "walking_with_music" : "listening_music", confidence: "high" };
+  }
+  if (headset && moving) {
+    return { state: "walking_with_audio", confidence: "medium" };
+  }
+  if (active && !screen) {
+    return { state: "moving_phone", confidence: "medium" };
+  }
+  if (charging && !screen && sensor.motionState === "still") {
+    return { state: "charging_rest", confidence: "medium" };
+  }
+  if (screen && app.includes("xingin")) {
+    return { state: "scrolling_xiaohongshu", confidence: "high" };
+  }
+  if (screen && app.includes("openai")) {
+    return { state: "chatting_in_chatgpt", confidence: "high" };
+  }
+  if (screen && sensor.foregroundApp) {
+    return { state: "using_app", confidence: "medium" };
+  }
+  if (!screen && sensor.motionState === "still") {
+    return { state: "phone_idle", confidence: "medium" };
+  }
+  if (moving) {
+    return { state: "moving", confidence: "low" };
+  }
+  return { state: "unknown", confidence: "low" };
 }
 
 function getResolvedLocation() {
@@ -376,6 +425,17 @@ async function buildSnapshot() {
       thermalDescription: thermal,
       currentUa: latestSensor.batteryCurrentUa,
     },
+    activity: {
+      inferred: inferActivityContext(latestSensor),
+      actionSyncEnabled: latestSensor.actionSyncEnabled,
+      screenInteractive: latestSensor.screenInteractive,
+      headphonesConnected: latestSensor.headphonesConnected,
+      audioRoute: latestSensor.audioRoute,
+      usageAccessGranted: latestSensor.usageAccessGranted,
+      foregroundApp: latestSensor.foregroundApp,
+      foregroundAppMinutes24h: latestSensor.foregroundAppMinutes24h,
+      topApps24h: latestSensor.topApps24h,
+    },
     ambient: {
       lightLux: latestSensor.lightLux,
       lightDescription: light,
@@ -434,6 +494,15 @@ const sensorInput = z
     soundConfidence: z.number().min(0).max(1).optional(),
     motionState: optionalString,
 
+    actionSyncEnabled: z.boolean().optional(),
+    screenInteractive: z.boolean().optional(),
+    headphonesConnected: z.boolean().optional(),
+    audioRoute: optionalString,
+    usageAccessGranted: z.boolean().optional(),
+    foregroundApp: z.string().trim().min(1).max(180).optional(),
+    foregroundAppMinutes24h: z.number().min(0).max(100000).optional(),
+    topApps24h: z.string().trim().min(1).max(12000).optional(),
+
     latitude: z.number().min(-90).max(90).optional(),
     longitude: z.number().min(-180).max(180).optional(),
     scene: z.string().trim().min(1).max(80).optional(),
@@ -486,6 +555,20 @@ function mergeSensor(incoming: z.infer<typeof sensorInput>, now: string): Sensor
     soundScene: incoming.soundScene ?? old?.soundScene ?? null,
     soundConfidence: incoming.soundConfidence ?? old?.soundConfidence ?? null,
     motionState: incoming.motionState ?? old?.motionState ?? null,
+
+    actionSyncEnabled:
+      incoming.actionSyncEnabled ?? old?.actionSyncEnabled ?? null,
+    screenInteractive:
+      incoming.screenInteractive ?? old?.screenInteractive ?? null,
+    headphonesConnected:
+      incoming.headphonesConnected ?? old?.headphonesConnected ?? null,
+    audioRoute: incoming.audioRoute ?? old?.audioRoute ?? null,
+    usageAccessGranted:
+      incoming.usageAccessGranted ?? old?.usageAccessGranted ?? null,
+    foregroundApp: incoming.foregroundApp ?? old?.foregroundApp ?? null,
+    foregroundAppMinutes24h:
+      incoming.foregroundAppMinutes24h ?? old?.foregroundAppMinutes24h ?? null,
+    topApps24h: incoming.topApps24h ?? old?.topApps24h ?? null,
 
     latitude: incoming.latitude ?? old?.latitude ?? null,
     longitude: incoming.longitude ?? old?.longitude ?? null,
@@ -543,6 +626,17 @@ export function createServer(): McpServer {
           storageFreeGb: latestSensor.storageFreeGb,
           screenBrightness: latestSensor.screenBrightness,
         },
+        activity: {
+          inferred: inferActivityContext(latestSensor),
+          actionSyncEnabled: latestSensor.actionSyncEnabled,
+          screenInteractive: latestSensor.screenInteractive,
+          headphonesConnected: latestSensor.headphonesConnected,
+          audioRoute: latestSensor.audioRoute,
+          usageAccessGranted: latestSensor.usageAccessGranted,
+          foregroundApp: latestSensor.foregroundApp,
+          foregroundAppMinutes24h: latestSensor.foregroundAppMinutes24h,
+          topApps24h: latestSensor.topApps24h,
+        },
         battery: {
           percent: latestSensor.batteryPercent,
           charging: latestSensor.charging,
@@ -567,6 +661,17 @@ export function createServer(): McpServer {
       textResult({
         ...dataFreshness(),
         scene: latestSensor?.scene ?? DEFAULT_SCENE,
+        activity: latestSensor
+          ? {
+              inferred: inferActivityContext(latestSensor),
+              screenInteractive: latestSensor.screenInteractive,
+              headphonesConnected: latestSensor.headphonesConnected,
+              audioRoute: latestSensor.audioRoute,
+              usageAccessGranted: latestSensor.usageAccessGranted,
+              foregroundApp: latestSensor.foregroundApp,
+              foregroundAppMinutes24h: latestSensor.foregroundAppMinutes24h,
+            }
+          : null,
       }),
   );
 
