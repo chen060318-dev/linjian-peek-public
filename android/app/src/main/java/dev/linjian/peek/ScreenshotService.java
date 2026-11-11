@@ -190,12 +190,31 @@ public class ScreenshotService extends AccessibilityService {
                 }
             }
         } catch (Exception ignored) { }
-        if (roots.isEmpty() && filter.length() == 0) {
-            try {
-                AccessibilityNodeInfo root = getRootInActiveWindow();
-                if (root != null) roots.add(root);
-            } catch (Exception ignored) { }
-        }
+        // Some OEM dual-app/container windows (notably cloned WeChat on HyperOS)
+        // can be visibly on screen while getWindows() only exposes SystemUI/overlay roots.
+        // Always probe the active root as an additional fallback, and include it when it
+        // matches the requested package (or when no package filter is used).
+        try {
+            AccessibilityNodeInfo active = getRootInActiveWindow();
+            if (active != null) {
+                String activePkg = active.getPackageName() == null ? "" : active.getPackageName().toString();
+                boolean packageMatches = filter.length() == 0 || filter.equals(activePkg);
+                boolean duplicate = false;
+                if (packageMatches) {
+                    int activeWindowId = active.getWindowId();
+                    for (AccessibilityNodeInfo existing : roots) {
+                        if (existing != null && existing.getWindowId() == activeWindowId) {
+                            duplicate = true;
+                            break;
+                        }
+                    }
+                    if (!duplicate) roots.add(active);
+                    else active.recycle();
+                } else {
+                    active.recycle();
+                }
+            }
+        } catch (Exception ignored) { }
         return roots;
     }
 
