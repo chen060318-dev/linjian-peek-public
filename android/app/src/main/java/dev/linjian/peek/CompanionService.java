@@ -12,12 +12,16 @@ import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
+import android.content.pm.LauncherApps;
+import android.content.pm.LauncherActivityInfo;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Handler;
 import android.os.HandlerThread;
 import android.os.IBinder;
 import android.os.PowerManager;
+import android.os.UserHandle;
+import android.os.Process;
 import android.os.SystemClock;
 import android.provider.AlarmClock;
 
@@ -76,7 +80,7 @@ public class CompanionService extends Service {
             DebugState.append(this, "服务启动失败：服务器地址或 Token 为空");
             stopSelf(); return START_NOT_STICKY;
         }
-        DebugState.append(this, "掌心窗公开版 v0.3.9.4 服务已启动，目标：" + serverUrl);
+        DebugState.append(this, "掌心窗公开版 v0.3.9.6 服务已启动，目标：" + serverUrl);
         if (!isPollingHealthy(this)) {
             if (pollHandler != null) pollHandler.removeCallbacksAndMessages(null);
             if (pollThread != null) pollThread.quitSafely();
@@ -389,6 +393,11 @@ public class CompanionService extends Service {
                 JSONObject rr = FocusMode.handleCommand(focusCtx, focusCmd); ok = rr.optBoolean("ok", false); result = rr.optString("result", rr.toString());
                 if (ok && ("start_focus_mode".equals(action) || "enable_focus_mode".equals(action))) FocusMode.forceShowLockActivity(focusCtx);
             } else if (isAppGateAction(action)) { JSONObject rr = AppGate.handleCommand(ctx, new JSONObject().put("action", normalizeGateAction(action)).put("app", app).put("package", pkg)); ok = rr.optBoolean("ok", false); result = rr.optString("result", rr.toString());
+            } else if ("list_app_profiles".equals(action)) {
+                result = listAppProfiles(ctx, pkg).toString(); ok = true;
+            } else if ("open_app_profile".equals(action)) {
+                JSONObject rr = openPackageProfile(ctx, pkg, index);
+                ok = rr.optBoolean("ok", false); result = rr.toString();
             } else if ("get_screen_nodes".equals(action)) {
                 if (svc != null) { svc.refreshScreenModel(); ok = true; result = svc.getScreenNodesJsonNow(pkg); }
                 else result = "accessibility service not ready";
@@ -497,6 +506,96 @@ public class CompanionService extends Service {
     }
 
     private static int clampWait(int v) { return Math.max(0, Math.min(5000, v)); }
+
+
+    public static JSONArray listAppProfiles(Context ctx, String pkg) {
+        JSONArray out = new JSONArray();
+        String target = pkg == null ? "" : pkg.trim();
+        if (target.isEmpty()) return out;
+        try {
+            LauncherApps launcher = (LauncherApps) ctx.getSystemService(Context.LAUNCHER_APPS_SERVICE);
+            if (launcher == null) return out;
+            List<UserHandle> profiles = launcher.getProfiles();
+            if (profiles == null) return out;
+            int profileIndex = 0;
+            UserHandle current = Process.myUserHandle();
+            for (UserHandle user : profiles) {
+                if (user == null) continue;
+                List<LauncherActivityInfo> activities;
+                try { activities = launcher.getActivityList(target, user); }
+                catch (Exception e) { activities = null; }
+                if (activities == null || activities.isEmpty()) continue;
+                profileIndex++;
+                JSONObject row = new JSONObject();
+                row.put("profile_index", profileIndex);
+                row.put("user", user.toString());
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) row.put("user_id", user.getIdentifier());
+                row.put("is_current_user", user.equals(current));
+                row.put("activity_count", activities.size());
+                LauncherActivityInfo first = activities.get(0);
+                if (first != null && first.getComponentName() != null) {
+                    row.put("component", first.getComponentName().flattenToShortString());
+                    CharSequence label = first.getLabel();
+                    row.put("label", label == null ? "" : label.toString());
+                }
+                out.put(row);
+            }
+        } catch (Exception e) {
+            try { out.put(new JSONObject().put("error", ScreenshotService.shortMsg(e))); } catch (Exception ignored) { }
+        }
+        return out;
+    }
+
+    public static JSONObject openPackageProfile(Context ctx, String pkg, int profileIndex) {
+        JSONObject out = new JSONObject();
+        String target = pkg == null ? "" : pkg.trim();
+        try {
+            if (target.isEmpty()) { out.put("ok", false); out.put("result", "package_empty"); return out; }
+            LauncherApps launcher = (LauncherApps) ctx.getSystemService(Context.LAUNCHER_APPS_SERVICE);
+            if (launcher == null) { out.put("ok", false); out.put("result", "launcher_apps_unavailable"); return out; }
+            List<UserHandle> profiles = launcher.getProfiles();
+            if (profiles == null || profiles.isEmpty()) { out.put("ok", false); out.put("result", "no_profiles"); return out; }
+
+            int wanted = Math.max(1, profileIndex);
+            int seen = 0;
+            JSONArray discovered = new JSONArray();
+            for (UserHandle user : profiles) {
+                if (user == null) continue;
+                List<LauncherActivityInfo> activities;
+                try { activities = launcher.getActivityList(target, user); }
+                catch (Exception e) { activities = null; }
+                if (activities == null || activities.isEmpty()) continue;
+                seen++;
+                JSONObject row = new JSONObject();
+                row.put("profile_index", seen);
+                row.put("user", user.toString());
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) row.put("user_id", user.getIdentifier());
+                row.put("is_current_user", user.equals(Process.myUserHandle()));
+                row.put("activity_count", activities.size());
+                discovered.put(row);
+
+                if (seen != wanted) continue;
+                LauncherActivityInfo info = activities.get(0);
+                if (info == null || info.getComponentName() == null) continue;
+                launcher.startMainActivity(info.getComponentName(), user, null, null);
+                out.put("ok", true);
+                out.put("result", "opened_profile:" + wanted);
+                out.put("profile_index", wanted);
+                out.put("user", user.toString());
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) out.put("user_id", user.getIdentifier());
+                out.put("is_current_user", user.equals(Process.myUserHandle()));
+                out.put("component", info.getComponentName().flattenToShortString());
+                out.put("discovered", discovered);
+                return out;
+            }
+            out.put("ok", false);
+            out.put("result", "profile_not_found:" + wanted);
+            out.put("discovered", discovered);
+        } catch (Exception e) {
+            try { out.put("ok", false); out.put("result", "profile_start_failed:" + ScreenshotService.shortMsg(e)); } catch (Exception ignored) { }
+        }
+        return out;
+    }
 
     public static String openPackageResult(Context ctx, String pkg) {
         if (pkg == null || pkg.trim().isEmpty()) return "package_empty";
