@@ -1162,7 +1162,7 @@ const COMPANION_ALLOWED_TOOLS = new Set([
   "list_screen_break_apps", "list_lockable_apps",
   "douyin_open_messages", "douyin_open_chat", "douyin_check_streak", "douyin_draft_message", "douyin_send_message",
   "wechat_probe_clone", "wechat_open_chats", "wechat_open_chat", "wechat_read_chat", "wechat_draft_message", "wechat_send_message", "wechat_quick_send_current",
-  "wechat_visual_nav"
+  "wechat_scroll_current_chat", "wechat_tap_current_screen", "wechat_open_sticker_category", "wechat_send_sticker_current", "wechat_visual_nav"
 ]);
 const DOUYIN_ALLOWED_TOOLS = new Set([
   "douyin_open_messages",
@@ -1178,7 +1178,7 @@ const WECHAT_ALLOWED_TOOLS = new Set([
   "wechat_read_chat",
   "wechat_draft_message",
   "wechat_send_message", "wechat_quick_send_current",
-  "wechat_visual_nav"
+  "wechat_scroll_current_chat", "wechat_tap_current_screen", "wechat_open_sticker_category", "wechat_send_sticker_current", "wechat_visual_nav"
 ]);
 
 
@@ -1187,7 +1187,7 @@ function makeServer({ allowedToolNames = null, principal = {} } = {}) {
   const commandBackedTools = new Set([
     "peek_screen", "get_screen_nodes", "tap_text", "input_text", "draft_xhs_comment", "xhs_comment", "send_visible_comment_after_confirmation",
     "douyin_open_messages", "douyin_open_chat", "douyin_check_streak", "douyin_draft_message", "douyin_send_message",
-    "wechat_visual_nav", "wechat_quick_send_current",
+    "wechat_visual_nav", "wechat_quick_send_current", "wechat_scroll_current_chat", "wechat_tap_current_screen", "wechat_open_sticker_category", "wechat_send_sticker_current",
     "add_guardian_calendar_event", "care_action", "trigger_guidian", "mark_guidian_returned",
     "set_guidian_config", "send_weather_notification", "send_phone_command", "open_app", "phone_home", "phone_back", "phone_recents",
     "phone_screen_off", "send_notification", "set_alarm", "run_sequence", "run_preset", "save_known_app", "screen_break_app",
@@ -1347,6 +1347,93 @@ function makeServer({ allowedToolNames = null, principal = {} } = {}) {
     const id = result?.command?.id;
     const observed = id ? await waitCommand(id, wait_seconds) : null;
     return textResult({ queued: result, observed_status: observed?.command || null, contact_text: label, visual_tap: visualTap || null, visual_hold: visualHold || null, current_tap: currentTap || null, current_swipe_start: currentSwipeStart || null, current_swipe_end: currentSwipeEnd || null });
+  });
+
+  server.tool("wechat_scroll_current_chat", "滚动当前双开微信聊天页。用于读取更早/更新的聊天记录、长消息或聊天记录卡片内容。direction=older 表示看更早的消息；newer 表示看后面的消息；up/down 表示手指实际上滑/下滑。会先拉起双开微信当前页面，不切联系人，不发送消息；滚动后应配合 peek_screen/latest_screen 继续读取。", {
+    direction: z.enum(["older","newer","up","down"]).default("older"),
+    amount: z.enum(["small","medium","large"]).default("medium"),
+    repeat: z.number().int().min(1).max(5).default(1),
+    device_id: z.string().default(DEFAULT_DEVICE),
+    wait_seconds: z.number().int().min(5).max(35).default(18)
+  }, async ({ direction = "older", amount = "medium", repeat = 1, device_id = DEFAULT_DEVICE, wait_seconds = 18 }) => {
+    const span = amount === "small" ? 650 : amount === "large" ? 1450 : 1050;
+    const centerX = 540;
+    const topY = Math.max(430, 1200 - Math.round(span / 2));
+    const bottomY = Math.min(2050, 1200 + Math.round(span / 2));
+    const fingerUp = direction === "up" || direction === "newer";
+    const x1 = centerX, x2 = centerX;
+    const y1 = fingerUp ? bottomY : topY;
+    const y2 = fingerUp ? topY : bottomY;
+    const steps = [
+      { label: "拉起双开微信当前页面", action: "open_app_profile", app: "微信", package: "com.tencent.mm", index: 2, wait_ms: 1600 }
+    ];
+    for (let n = 0; n < repeat; n++) {
+      steps.push({ label: `滚动微信聊天页 ${n + 1}/${repeat}`, action: "swipe", x1, y1, x2, y2, duration: 620, wait_ms: 850 });
+    }
+    const result = await postCommand({ action: "run_sequence", device_id, steps, payload: { steps, stop_on_error: true }, stop_on_error: true });
+    const id = result?.command?.id;
+    const observed = id ? await waitCommand(id, wait_seconds) : null;
+    return textResult({
+      queued: result,
+      observed_status: observed?.command || null,
+      direction,
+      amount,
+      repeat,
+      gesture: { x1, y1, x2, y2 },
+      note: direction === "older" ? "已向更早聊天记录滚动；请继续读取当前屏幕。" : direction === "newer" ? "已向更新聊天记录滚动；请继续读取当前屏幕。" : "已按指定手势滚动当前微信页；请继续读取当前屏幕。"
+    });
+  });
+
+  server.tool("wechat_tap_current_screen", "直接点按当前双开微信页面的一个坐标。用于点开聊天记录卡片、图片、表情面板、表情分类标签或其他当前可见控件。调用前应先用 peek_screen/latest_screen 确认目标位置；不会自动输入文字。", {
+    x: z.number().int().min(0).max(1080),
+    y: z.number().int().min(120).max(2390),
+    device_id: z.string().default(DEFAULT_DEVICE),
+    wait_seconds: z.number().int().min(5).max(30).default(14)
+  }, async ({ x, y, device_id = DEFAULT_DEVICE, wait_seconds = 14 }) => {
+    const steps = [
+      { label: "拉起双开微信当前页面", action: "open_app_profile", app: "微信", package: "com.tencent.mm", index: 2, wait_ms: 1400 },
+      { label: "点按当前微信页面", action: "tap", x, y, wait_ms: 1000 }
+    ];
+    const result = await postCommand({ action: "run_sequence", device_id, steps, payload: { steps, stop_on_error: true }, stop_on_error: true });
+    const id = result?.command?.id;
+    const observed = id ? await waitCommand(id, wait_seconds) : null;
+    return textResult({ queued: result, observed_status: observed?.command || null, point: { x, y } });
+  });
+
+  server.tool("wechat_open_sticker_category", "打开当前双开微信聊天页的表情面板，并点开分类栏里的任意表情分类。分类栏不只有收藏爱心：标准表情、收藏和用户添加的各个表情包分类都可以点。先用 peek_screen 看分类栏，传入该分类标签中心坐标；分类是动态的，不要假定固定只有某一栏。", {
+    tab_x: z.number().int().min(0).max(1080),
+    tab_y: z.number().int().min(900).max(1900).default(1425),
+    open_panel: z.boolean().default(true),
+    emoji_button_x: z.number().int().min(0).max(1080).default(900),
+    emoji_button_y: z.number().int().min(1500).max(2350).default(2190),
+    device_id: z.string().default(DEFAULT_DEVICE),
+    wait_seconds: z.number().int().min(5).max(30).default(16)
+  }, async ({ tab_x, tab_y = 1425, open_panel = true, emoji_button_x = 900, emoji_button_y = 2190, device_id = DEFAULT_DEVICE, wait_seconds = 16 }) => {
+    const steps = [
+      { label: "拉起双开微信当前页面", action: "open_app_profile", app: "微信", package: "com.tencent.mm", index: 2, wait_ms: 1400 }
+    ];
+    if (open_panel) steps.push({ label: "打开微信表情面板", action: "tap", x: emoji_button_x, y: emoji_button_y, wait_ms: 900 });
+    steps.push({ label: "打开指定表情分类", action: "tap", x: tab_x, y: tab_y, wait_ms: 1000 });
+    const result = await postCommand({ action: "run_sequence", device_id, steps, payload: { steps, stop_on_error: true }, stop_on_error: true });
+    const id = result?.command?.id;
+    const observed = id ? await waitCommand(id, wait_seconds) : null;
+    return textResult({ queued: result, observed_status: observed?.command || null, category_point: { x: tab_x, y: tab_y }, open_panel });
+  });
+
+  server.tool("wechat_send_sticker_current", "发送当前双开微信聊天页里已经可见的一张微信表情/自定义表情。微信表情通常点一下就会直接发送；调用前必须确认用户已授权当前会话发送，并先用 peek_screen 确认该表情坐标。收藏表情和任意分类表情包都适用。", {
+    x: z.number().int().min(0).max(1080),
+    y: z.number().int().min(900).max(2350),
+    device_id: z.string().default(DEFAULT_DEVICE),
+    wait_seconds: z.number().int().min(5).max(30).default(14)
+  }, async ({ x, y, device_id = DEFAULT_DEVICE, wait_seconds = 14 }) => {
+    const steps = [
+      { label: "拉起双开微信当前页面", action: "open_app_profile", app: "微信", package: "com.tencent.mm", index: 2, wait_ms: 1200 },
+      { label: "发送当前微信表情", action: "tap", x, y, wait_ms: 1100 }
+    ];
+    const result = await postCommand({ action: "run_sequence", device_id, steps, payload: { steps, stop_on_error: true }, stop_on_error: true });
+    const id = result?.command?.id;
+    const observed = id ? await waitCommand(id, wait_seconds) : null;
+    return textResult({ queued: result, observed_status: observed?.command || null, sticker_point: { x, y }, note: "已点按当前可见微信表情；请用 peek_screen 复核是否形成消息气泡。" });
   });
 
   server.tool("wechat_read_chat", "进入指定双开微信会话并读取当前页面无障碍节点；只读，不发送消息。", {
