@@ -1321,11 +1321,15 @@ function makeServer({ allowedToolNames = null, principal = {} } = {}) {
   }, async ({ contact_text, device_id = DEFAULT_DEVICE, wait_seconds = 26 }) => {
     const visualTap = wechatCoordHint(contact_text, "tap");
     const visualHold = wechatCoordHint(contact_text, "hold");
+    const currentTap = wechatCoordHint(contact_text, "currenttap");
     const label = wechatContactLabel(contact_text);
-    const steps = [
+    const steps = currentTap ? [] : [
       { label: "打开双开微信", action: "open_app_profile", app: "微信", package: "com.tencent.mm", index: 2, wait_ms: 2800 }
     ];
-    if (visualHold) {
+    if (currentTap) {
+      if (currentTap.x < 0 || currentTap.x > 1080 || currentTap.y < 120 || currentTap.y > 2390) throw new Error("微信当前屏幕点按坐标超出安全范围");
+      steps.push({ label: "直接点按当前微信屏幕", action: "tap", x: currentTap.x, y: currentTap.y, wait_ms: 1200 });
+    } else if (visualHold) {
       if (visualHold.x < 0 || visualHold.x > 1080 || visualHold.y < 120 || visualHold.y > 2390) throw new Error("微信视觉长按坐标超出 1080×2400 屏幕安全范围");
       steps.push({ label: "按截图坐标长按", action: "swipe", x1: visualHold.x, y1: visualHold.y, x2: visualHold.x, y2: visualHold.y, duration: 780, wait_ms: 1400 });
     } else if (visualTap) {
@@ -1337,7 +1341,7 @@ function makeServer({ allowedToolNames = null, principal = {} } = {}) {
     const result = await postCommand({ action: "run_sequence", device_id, steps, payload: { steps, stop_on_error: true }, stop_on_error: true });
     const id = result?.command?.id;
     const observed = id ? await waitCommand(id, wait_seconds) : null;
-    return textResult({ queued: result, observed_status: observed?.command || null, contact_text: label, visual_tap: visualTap || null, visual_hold: visualHold || null });
+    return textResult({ queued: result, observed_status: observed?.command || null, contact_text: label, visual_tap: visualTap || null, visual_hold: visualHold || null, current_tap: currentTap || null });
   });
 
   server.tool("wechat_read_chat", "进入指定双开微信会话并读取当前页面无障碍节点；只读，不发送消息。", {
