@@ -1415,7 +1415,7 @@ function makeServer({ allowedToolNames = null, principal = {} } = {}) {
       const observed = id ? await waitCommand(id, wait_seconds) : null;
       return textResult({ queued: result, observed_status: observed?.command || null, contact_text: label, sent_text: text, mode: "accessibility" });
     }
-    if (inputPoint.x < 80 || inputPoint.x > 980 || inputPoint.y < 700 || inputPoint.y > 2260) throw new Error("微信视觉输入框坐标超出安全范围");
+    if (inputPoint.x < 80 || inputPoint.x > 980 || inputPoint.y < 700 || inputPoint.y > 2350) throw new Error("微信视觉输入框坐标超出安全范围");
     if (sendPoint.x < 650 || sendPoint.x > 1080 || sendPoint.y < 700 || sendPoint.y > 2350) throw new Error("微信视觉发送键坐标超出安全范围");
     const copied = await postCommand({ action: "copy_takeout_note", device_id, note: text, payload: { note: text } });
     const copyId = copied?.command?.id;
