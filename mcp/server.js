@@ -1162,6 +1162,14 @@ const COMPANION_ALLOWED_TOOLS = new Set([
   "list_screen_break_apps", "list_lockable_apps",
   "douyin_open_messages", "douyin_open_chat", "douyin_check_streak", "douyin_draft_message", "douyin_send_message"
 ]);
+const DOUYIN_ALLOWED_TOOLS = new Set([
+  "douyin_open_messages",
+  "douyin_open_chat",
+  "douyin_check_streak",
+  "douyin_draft_message",
+  "douyin_send_message"
+]);
+
 
 function makeServer({ allowedToolNames = null, principal = {} } = {}) {
   const server = new McpServer({ name: "掌心窗", version: "0.3.9.1" });
@@ -2650,6 +2658,24 @@ app.post("/mcp", requireOAuth(MCP_READ_SCOPE, MCP_CONNECT_SCOPE), async (req, re
   }
 });
 app.get("/mcp", requireOAuth(MCP_READ_SCOPE, MCP_CONNECT_SCOPE), (_req, res) => res.status(405).json({ ok: false, error: "Use POST /mcp for Streamable HTTP MCP." }));
+
+
+app.post("/mcp-douyin", requireOAuth(MCP_CONTROL_SCOPE), async (req, res) => {
+  try {
+    const server = makeServer({ allowedToolNames: DOUYIN_ALLOWED_TOOLS, principal: req.auth || {} });
+    const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+    const body = sanitizeMcpRequestBody(req.body);
+    res.on("close", () => transport.close());
+    await server.connect(transport);
+    await transport.handleRequest(req, res, body);
+  } catch (err) {
+    console.error(err);
+    if (!res.headersSent) res.status(500).json({ jsonrpc: "2.0", error: { code: -32603, message: "Internal MCP error" }, id: null });
+  }
+});
+app.get("/mcp-douyin", requireOAuth(MCP_CONTROL_SCOPE), (_req, res) =>
+  res.status(405).json({ ok: false, error: "Use POST /mcp-douyin for Streamable HTTP MCP." })
+);
 
 app.post("/mcp-wallet", requireOAuth(MCP_CONTROL_SCOPE), async (req, res) => {
   if (!MCP_ENABLE_SENSITIVE_TOOLS || !MCP_ENABLE_WALLET_TOOLS) {
