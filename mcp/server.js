@@ -1474,6 +1474,8 @@ function makeServer({ allowedToolNames = null, principal = {} } = {}) {
   }, async ({ device_id = DEFAULT_DEVICE, wait_seconds = 18 }) => {
     const steps = [
       { label: "打开双开抖音", action: "open_app_profile", app: "抖音", package: "com.ss.android.ugc.aweme", index: 2, wait_ms: 1800 },
+      { label: "关闭首次提醒", action: "tap_text", package: "com.ss.android.ugc.aweme", target_text: "不再提醒", match: "exact", wait_ms: 500 },
+      { label: "关闭弹窗兜底", action: "tap_text", package: "com.ss.android.ugc.aweme", target_text: "关闭", match: "exact", wait_ms: 500 },
       { label: "进入消息页", action: "tap_text", package: "com.ss.android.ugc.aweme", target_text: "消息", match: "exact", wait_ms: 1600 }
     ];
     const result = await postCommand({ action: "run_sequence", device_id, steps, payload: { steps, stop_on_error: false }, stop_on_error: false });
@@ -1487,6 +1489,8 @@ function makeServer({ allowedToolNames = null, principal = {} } = {}) {
   }, async ({ contact_text, device_id = DEFAULT_DEVICE, wait_seconds = 22 }) => {
     const steps = [
       { label: "打开双开抖音", action: "open_app_profile", app: "抖音", package: "com.ss.android.ugc.aweme", index: 2, wait_ms: 1800 },
+      { label: "关闭首次提醒", action: "tap_text", package: "com.ss.android.ugc.aweme", target_text: "不再提醒", match: "exact", wait_ms: 500 },
+      { label: "关闭弹窗兜底", action: "tap_text", package: "com.ss.android.ugc.aweme", target_text: "关闭", match: "exact", wait_ms: 500 },
       { label: "进入消息页", action: "tap_text", package: "com.ss.android.ugc.aweme", target_text: "消息", match: "exact", wait_ms: 1600 },
       { label: "打开指定聊天", action: "tap_text", package: "com.ss.android.ugc.aweme", target_text: contact_text, match: "contains", wait_ms: 1600 }
     ];
@@ -1501,6 +1505,8 @@ function makeServer({ allowedToolNames = null, principal = {} } = {}) {
   }, async ({ contact_text, device_id = DEFAULT_DEVICE, wait_seconds = 24 }) => {
     const steps = [
       { label: "打开双开抖音", action: "open_app_profile", app: "抖音", package: "com.ss.android.ugc.aweme", index: 2, wait_ms: 1800 },
+      { label: "关闭首次提醒", action: "tap_text", package: "com.ss.android.ugc.aweme", target_text: "不再提醒", match: "exact", wait_ms: 500 },
+      { label: "关闭弹窗兜底", action: "tap_text", package: "com.ss.android.ugc.aweme", target_text: "关闭", match: "exact", wait_ms: 500 },
       { label: "进入消息页", action: "tap_text", package: "com.ss.android.ugc.aweme", target_text: "消息", match: "exact", wait_ms: 1500 },
       { label: "打开指定聊天", action: "tap_text", package: "com.ss.android.ugc.aweme", target_text: contact_text, match: "contains", wait_ms: 1400 },
       { label: "读取聊天页", action: "get_screen_nodes", package: "com.ss.android.ugc.aweme", wait_ms: 300 }
@@ -1517,6 +1523,8 @@ function makeServer({ allowedToolNames = null, principal = {} } = {}) {
   }, async ({ contact_text, text, device_id = DEFAULT_DEVICE, wait_seconds = 24 }) => {
     const steps = [
       { label: "打开双开抖音", action: "open_app_profile", app: "抖音", package: "com.ss.android.ugc.aweme", index: 2, wait_ms: 1800 },
+      { label: "关闭首次提醒", action: "tap_text", package: "com.ss.android.ugc.aweme", target_text: "不再提醒", match: "exact", wait_ms: 500 },
+      { label: "关闭弹窗兜底", action: "tap_text", package: "com.ss.android.ugc.aweme", target_text: "关闭", match: "exact", wait_ms: 500 },
       { label: "进入消息页", action: "tap_text", package: "com.ss.android.ugc.aweme", target_text: "消息", match: "exact", wait_ms: 1500 },
       { label: "打开指定聊天", action: "tap_text", package: "com.ss.android.ugc.aweme", target_text: contact_text, match: "contains", wait_ms: 1400 },
       { label: "写入私信草稿", action: "input_text", package: "com.ss.android.ugc.aweme", text, append: false, wait_ms: 600 }
@@ -1533,6 +1541,8 @@ function makeServer({ allowedToolNames = null, principal = {} } = {}) {
   }, async ({ contact_text, text, device_id = DEFAULT_DEVICE, wait_seconds = 28 }) => {
     const steps = [
       { label: "打开双开抖音", action: "open_app_profile", app: "抖音", package: "com.ss.android.ugc.aweme", index: 2, wait_ms: 1800 },
+      { label: "关闭首次提醒", action: "tap_text", package: "com.ss.android.ugc.aweme", target_text: "不再提醒", match: "exact", wait_ms: 500 },
+      { label: "关闭弹窗兜底", action: "tap_text", package: "com.ss.android.ugc.aweme", target_text: "关闭", match: "exact", wait_ms: 500 },
       { label: "进入消息页", action: "tap_text", package: "com.ss.android.ugc.aweme", target_text: "消息", match: "exact", wait_ms: 1500 },
       { label: "打开指定聊天", action: "tap_text", package: "com.ss.android.ugc.aweme", target_text: contact_text, match: "contains", wait_ms: 1400 },
       { label: "写入私信", action: "input_text", package: "com.ss.android.ugc.aweme", text, append: false, wait_ms: 500 },
