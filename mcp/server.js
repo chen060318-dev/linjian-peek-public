@@ -1364,6 +1364,41 @@ function makeServer({ allowedToolNames = null, principal = {} } = {}) {
     const clipPoint = wechatCoordHint(contact_text, "clip");
     const holdPoint = wechatCoordHint(contact_text, "hold");
     const selectPoint = wechatCoordHint(contact_text, "select");
+    const menuPastePoint = wechatCoordHint(contact_text, "menu");
+
+    if (holdPoint && selectPoint && menuPastePoint) {
+      if (holdPoint.x < 80 || holdPoint.x > 980 || holdPoint.y < 700 || holdPoint.y > 2350) throw new Error("微信输入框长按坐标超出安全范围");
+      if (selectPoint.x < 0 || selectPoint.x > 1080 || selectPoint.y < 1500 || selectPoint.y > 2300) throw new Error("微信全选菜单坐标超出安全范围");
+      if (menuPastePoint.x < 0 || menuPastePoint.x > 1080 || menuPastePoint.y < 1500 || menuPastePoint.y > 2300) throw new Error("微信粘贴菜单坐标超出安全范围");
+
+      const copied = await postCommand({ action: "copy_takeout_note", device_id, note: text, payload: { note: text } });
+      const copyId = copied?.command?.id;
+      const copyObserved = copyId ? await waitCommand(copyId, Math.min(10, wait_seconds)) : null;
+      if (copyObserved?.command?.status && copyObserved.command.status !== "completed") throw new Error("写入系统剪贴板失败");
+
+      const steps = [
+        { label: "先回桌面清掉前台抢焦点", action: "home", wait_ms: 900 },
+        { label: "打开双开微信", action: "open_app_profile", app: "微信", package: "com.tencent.mm", index: 2, wait_ms: 3200 },
+        { label: "长按真实微信输入框", action: "swipe", x1: holdPoint.x, y1: holdPoint.y, x2: holdPoint.x, y2: holdPoint.y, duration: 780, wait_ms: 900 },
+        { label: "点击全选", action: "tap", x: selectPoint.x, y: selectPoint.y, wait_ms: 700 },
+        { label: "点击微信粘贴替换选区", action: "tap", x: menuPastePoint.x, y: menuPastePoint.y, wait_ms: 900 }
+      ];
+      const result = await postCommand({ action: "run_sequence", device_id, steps, payload: { steps, stop_on_error: true }, stop_on_error: true });
+      const id = result?.command?.id;
+      const observed = id ? await waitCommand(id, wait_seconds) : null;
+      return textResult({
+        queued: result,
+        clipboard: copied,
+        clipboard_status: copyObserved?.command || null,
+        observed_status: observed?.command || null,
+        contact_text: label,
+        mode: "select_all_paste_replace",
+        hold_point: holdPoint,
+        select_point: selectPoint,
+        menu_paste_point: menuPastePoint,
+        safety_note: "通过微信自身的全选+粘贴替换草稿；不会点击发送。"
+      });
+    }
 
     if (holdPoint && selectPoint) {
       if (holdPoint.x < 80 || holdPoint.x > 980 || holdPoint.y < 700 || holdPoint.y > 2350) throw new Error("微信输入框长按坐标超出安全范围");
