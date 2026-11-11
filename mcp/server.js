@@ -1362,6 +1362,32 @@ function makeServer({ allowedToolNames = null, principal = {} } = {}) {
     const label = wechatContactLabel(contact_text);
     const focusPoint = wechatCoordHint(contact_text, "focus");
     const clipPoint = wechatCoordHint(contact_text, "clip");
+    const holdPoint = wechatCoordHint(contact_text, "hold");
+    const selectPoint = wechatCoordHint(contact_text, "select");
+
+    if (holdPoint && selectPoint) {
+      if (holdPoint.x < 80 || holdPoint.x > 980 || holdPoint.y < 700 || holdPoint.y > 2350) throw new Error("微信输入框长按坐标超出安全范围");
+      if (selectPoint.x < 0 || selectPoint.x > 1080 || selectPoint.y < 1500 || selectPoint.y > 2300) throw new Error("微信全选菜单坐标超出安全范围");
+      const steps = [
+        { label: "先回桌面清掉前台抢焦点", action: "home", wait_ms: 900 },
+        { label: "打开双开微信", action: "open_app_profile", app: "微信", package: "com.tencent.mm", index: 2, wait_ms: 3200 },
+        { label: "长按真实微信输入框", action: "swipe", x1: holdPoint.x, y1: holdPoint.y, x2: holdPoint.x, y2: holdPoint.y, duration: 780, wait_ms: 900 },
+        { label: "点击全选", action: "tap", x: selectPoint.x, y: selectPoint.y, wait_ms: 700 },
+        { label: "覆盖全选后的微信输入框", action: "input_text", package: "com.tencent.mm", text, append: false, wait_ms: 900 }
+      ];
+      const result = await postCommand({ action: "run_sequence", device_id, steps, payload: { steps, stop_on_error: true }, stop_on_error: true });
+      const id = result?.command?.id;
+      const observed = id ? await waitCommand(id, wait_seconds) : null;
+      return textResult({
+        queued: result,
+        observed_status: observed?.command || null,
+        contact_text: label,
+        mode: "select_all_replace",
+        hold_point: holdPoint,
+        select_point: selectPoint,
+        safety_note: "长按真实微信输入框后全选并覆盖；不会点击发送。"
+      });
+    }
 
     if (focusPoint && !clipPoint) {
       if (focusPoint.x < 80 || focusPoint.x > 980 || focusPoint.y < 700 || focusPoint.y > 2350) throw new Error("微信视觉输入框坐标超出安全范围");
