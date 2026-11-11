@@ -1161,7 +1161,8 @@ const COMPANION_ALLOWED_TOOLS = new Set([
   "end_screen_break", "extend_screen_break", "deny_screen_break_release_request",
   "list_screen_break_apps", "list_lockable_apps",
   "douyin_open_messages", "douyin_open_chat", "douyin_check_streak", "douyin_draft_message", "douyin_send_message",
-  "wechat_probe_clone", "wechat_open_chats", "wechat_open_chat", "wechat_read_chat", "wechat_draft_message", "wechat_send_message"
+  "wechat_probe_clone", "wechat_open_chats", "wechat_open_chat", "wechat_read_chat", "wechat_draft_message", "wechat_send_message",
+  "wechat_visual_nav"
 ]);
 const DOUYIN_ALLOWED_TOOLS = new Set([
   "douyin_open_messages",
@@ -1176,7 +1177,8 @@ const WECHAT_ALLOWED_TOOLS = new Set([
   "wechat_open_chat",
   "wechat_read_chat",
   "wechat_draft_message",
-  "wechat_send_message"
+  "wechat_send_message",
+  "wechat_visual_nav"
 ]);
 
 
@@ -1185,6 +1187,7 @@ function makeServer({ allowedToolNames = null, principal = {} } = {}) {
   const commandBackedTools = new Set([
     "peek_screen", "get_screen_nodes", "tap_text", "input_text", "draft_xhs_comment", "xhs_comment", "send_visible_comment_after_confirmation",
     "douyin_open_messages", "douyin_open_chat", "douyin_check_streak", "douyin_draft_message", "douyin_send_message",
+    "wechat_visual_nav",
     "add_guardian_calendar_event", "care_action", "trigger_guidian", "mark_guidian_returned",
     "set_guidian_config", "send_weather_notification", "send_phone_command", "open_app", "phone_home", "phone_back", "phone_recents",
     "phone_screen_off", "send_notification", "set_alarm", "run_sequence", "run_preset", "save_known_app", "screen_break_app",
@@ -1244,6 +1247,38 @@ function makeServer({ allowedToolNames = null, principal = {} } = {}) {
   }
 
   // WeChat tools are intentionally registered early because some clients only ingest the first tool schemas.
+  server.tool("wechat_visual_nav", "双开微信的视觉导航工具。用于截图识别后的返回、点按会话或上下滚动；不依赖微信无障碍节点。tap 模式硬限制在屏幕上方安全区域，禁止触碰输入框、键盘与发送区域。", {
+    mode: z.enum(["back", "tap", "swipe_up", "swipe_down"]),
+    x: z.number().min(0).max(1080).optional(),
+    y: z.number().min(90).max(1760).optional(),
+    device_id: z.string().default(DEFAULT_DEVICE),
+    wait_seconds: z.number().int().min(3).max(25).default(12)
+  }, async ({ mode, x, y, device_id = DEFAULT_DEVICE, wait_seconds = 12 }) => {
+    const steps = [];
+    if (mode === "back") {
+      steps.push({ label: "微信视觉返回", action: "back", wait_ms: 900 });
+    } else if (mode === "tap") {
+      if (!Number.isFinite(x) || !Number.isFinite(y)) throw new Error("tap 模式必须提供 x 和 y");
+      if (y > 1760) throw new Error("安全限制：视觉导航不允许点击微信输入区、键盘或发送区域");
+      steps.push({ label: "微信视觉点按", action: "tap", x, y, wait_ms: 1100 });
+    } else if (mode === "swipe_up") {
+      steps.push({ label: "微信视觉向上滚动", action: "swipe", x1: 540, y1: 1500, x2: 540, y2: 520, duration: 450, wait_ms: 1100 });
+    } else if (mode === "swipe_down") {
+      steps.push({ label: "微信视觉向下滚动", action: "swipe", x1: 540, y1: 520, x2: 540, y2: 1500, duration: 450, wait_ms: 1100 });
+    }
+    const result = await postCommand({ action: "run_sequence", device_id, steps, payload: { steps, stop_on_error: true }, stop_on_error: true });
+    const id = result?.command?.id;
+    const observed = id ? await waitCommand(id, wait_seconds) : null;
+    return textResult({
+      queued: result,
+      observed_status: observed?.command || null,
+      mode,
+      x: x ?? null,
+      y: y ?? null,
+      safety_note: "仅视觉导航；tap 被限制在 y<=1760，不触碰微信输入、键盘或发送区。操作后请用 latest_screen/peek_screen 复核画面。"
+    });
+  });
+
   server.tool("wechat_probe_clone", "只打开双开微信并读取当前页面无障碍节点，用于确认双开实例与页面结构；不会点击联系人或发送消息。", {
     device_id: z.string().default(DEFAULT_DEVICE), wait_seconds: z.number().int().min(5).max(35).default(22)
   }, async ({ device_id = DEFAULT_DEVICE, wait_seconds = 22 }) => {
