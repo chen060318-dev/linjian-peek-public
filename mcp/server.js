@@ -1369,6 +1369,7 @@ function makeServer({ allowedToolNames = null, principal = {} } = {}) {
       if (copyObserved?.command?.status && copyObserved.command.status !== "completed") throw new Error("写入系统剪贴板失败");
 
       const steps = [
+        { label: "先回桌面清掉前台抢焦点", action: "home", wait_ms: 900 },
         { label: "打开双开微信", action: "open_app_profile", app: "微信", package: "com.tencent.mm", index: 2, wait_ms: 3200 },
         { label: "激活微信输入框并弹出键盘", action: "tap", x: focusPoint.x, y: focusPoint.y, wait_ms: 1200 },
         { label: "点击百度剪贴板内容卡片", action: "tap", x: clipPoint.x, y: clipPoint.y, wait_ms: 1100 }
@@ -1425,6 +1426,7 @@ function makeServer({ allowedToolNames = null, principal = {} } = {}) {
       if (copyObserved?.command?.status && copyObserved.command.status !== "completed") throw new Error("写入系统剪贴板失败");
 
       const steps = [
+        { label: "先回桌面清掉前台抢焦点", action: "home", wait_ms: 900 },
         { label: "打开双开微信", action: "open_app_profile", app: "微信", package: "com.tencent.mm", index: 2, wait_ms: 3200 },
         { label: "激活微信输入框并弹出键盘", action: "tap", x: focusPoint.x, y: focusPoint.y, wait_ms: 1200 },
         { label: "点击百度剪贴板内容卡片", action: "tap", x: clipPoint.x, y: clipPoint.y, wait_ms: 900 },
