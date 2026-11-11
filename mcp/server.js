@@ -1391,8 +1391,9 @@ function makeServer({ allowedToolNames = null, principal = {} } = {}) {
     }
 
     const steps = [
+      { label: "先回桌面清掉前台抢焦点", action: "home", wait_ms: 900 },
       { label: "打开双开微信", action: "open_app_profile", app: "微信", package: "com.tencent.mm", index: 2, wait_ms: 3500 },
-      { label: "写入微信草稿", action: "input_text", package: "com.tencent.mm", text, append: false, wait_ms: 800 }
+      { label: "覆盖写入微信草稿", action: "input_text", package: "com.tencent.mm", text, append: false, wait_ms: 900 }
     ];
     const result = await postCommand({ action: "run_sequence", device_id, steps, payload: { steps, stop_on_error: true }, stop_on_error: true });
     const id = result?.command?.id;
@@ -1414,6 +1415,27 @@ function makeServer({ allowedToolNames = null, principal = {} } = {}) {
     const focusPoint = wechatCoordHint(contact_text, "focus");
     const clipPoint = wechatCoordHint(contact_text, "clip");
     const sendPoint = wechatCoordHint(contact_text, "send");
+
+    if (sendPoint && !focusPoint && !clipPoint) {
+      if (sendPoint.x < 650 || sendPoint.x > 1080 || sendPoint.y < 900 || sendPoint.y > 1800) throw new Error("微信视觉发送键坐标超出安全范围");
+      const steps = [
+        { label: "先回桌面清掉前台抢焦点", action: "home", wait_ms: 900 },
+        { label: "打开双开微信", action: "open_app_profile", app: "微信", package: "com.tencent.mm", index: 2, wait_ms: 3500 },
+        { label: "覆盖写入微信消息", action: "input_text", package: "com.tencent.mm", text, append: false, wait_ms: 900 },
+        { label: "按坐标发送微信消息", action: "tap", x: sendPoint.x, y: sendPoint.y, wait_ms: 900 }
+      ];
+      const result = await postCommand({ action: "run_sequence", device_id, steps, payload: { steps, stop_on_error: true }, stop_on_error: true });
+      const id = result?.command?.id;
+      const observed = id ? await waitCommand(id, wait_seconds) : null;
+      return textResult({
+        queued: result,
+        observed_status: observed?.command || null,
+        contact_text: label,
+        sent_text: text,
+        mode: "direct_input_visual_send",
+        send_point: sendPoint
+      });
+    }
 
     if (focusPoint && clipPoint && sendPoint) {
       if (focusPoint.x < 80 || focusPoint.x > 980 || focusPoint.y < 700 || focusPoint.y > 2350) throw new Error("微信视觉输入框坐标超出安全范围");
@@ -1449,8 +1471,9 @@ function makeServer({ allowedToolNames = null, principal = {} } = {}) {
     }
 
     const steps = [
+      { label: "先回桌面清掉前台抢焦点", action: "home", wait_ms: 900 },
       { label: "打开双开微信", action: "open_app_profile", app: "微信", package: "com.tencent.mm", index: 2, wait_ms: 3500 },
-      { label: "写入微信消息", action: "input_text", package: "com.tencent.mm", text, append: false, wait_ms: 800 },
+      { label: "覆盖写入微信消息", action: "input_text", package: "com.tencent.mm", text, append: false, wait_ms: 900 },
       { label: "发送微信消息", action: "tap_text", package: "com.tencent.mm", target_text: "发送", match: "exact", wait_ms: 900 }
     ];
     const result = await postCommand({ action: "run_sequence", device_id, steps, payload: { steps, stop_on_error: true }, stop_on_error: true });
