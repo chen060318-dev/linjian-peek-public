@@ -1359,6 +1359,27 @@ function makeServer({ allowedToolNames = null, principal = {} } = {}) {
     const focusPoint = wechatCoordHint(contact_text, "focus");
     const clipPoint = wechatCoordHint(contact_text, "clip");
 
+    if (focusPoint && !clipPoint) {
+      if (focusPoint.x < 80 || focusPoint.x > 980 || focusPoint.y < 700 || focusPoint.y > 2350) throw new Error("微信视觉输入框坐标超出安全范围");
+      const steps = [
+        { label: "先回桌面清掉前台抢焦点", action: "home", wait_ms: 900 },
+        { label: "打开双开微信", action: "open_app_profile", app: "微信", package: "com.tencent.mm", index: 2, wait_ms: 3200 },
+        { label: "聚焦真实微信输入框", action: "tap", x: focusPoint.x, y: focusPoint.y, wait_ms: 900 },
+        { label: "覆盖写入聚焦后的微信输入框", action: "input_text", package: "com.tencent.mm", text, append: false, wait_ms: 900 }
+      ];
+      const result = await postCommand({ action: "run_sequence", device_id, steps, payload: { steps, stop_on_error: true }, stop_on_error: true });
+      const id = result?.command?.id;
+      const observed = id ? await waitCommand(id, wait_seconds) : null;
+      return textResult({
+        queued: result,
+        observed_status: observed?.command || null,
+        contact_text: label,
+        mode: "focused_accessibility",
+        focus_point: focusPoint,
+        safety_note: "先聚焦真实微信输入框，再覆盖写入；不会点击发送。"
+      });
+    }
+
     if (focusPoint && clipPoint) {
       if (focusPoint.x < 80 || focusPoint.x > 980 || focusPoint.y < 700 || focusPoint.y > 2350) throw new Error("微信视觉输入框坐标超出安全范围");
       if (clipPoint.x < 0 || clipPoint.x > 1080 || clipPoint.y < 700 || clipPoint.y > 2000) throw new Error("百度剪贴板卡片坐标超出安全范围");
