@@ -1351,11 +1351,12 @@ function makeServer({ allowedToolNames = null, principal = {} } = {}) {
     return textResult({ queued: result, observed_status: observed?.command || null, contact_text, note: "只读取当前微信会话页面，不发送消息。" });
   });
 
-  server.tool("wechat_draft_message", "把文字写进双开微信当前会话输入框，但绝不点击发送。视觉模式可在 contact_text 后附 |focus=x,y|input=x,y|paste=x,y；focus 是键盘弹出前输入框坐标，input 是键盘弹出后的输入框坐标。", {
+  server.tool("wechat_draft_message", "把文字写进双开微信当前会话输入框，但绝不点击发送。视觉模式可在 contact_text 后附 |focus=x,y|clip=x,y；focus 激活文字输入框，clip 直接点击百度输入法自动弹出的剪贴板内容卡片。旧 input/paste 路径继续兼容。", {
     contact_text: z.string().min(1).max(80), text: z.string().min(1).max(500),
     device_id: z.string().default(DEFAULT_DEVICE), wait_seconds: z.number().int().min(5).max(40).default(28)
   }, async ({ contact_text, text, device_id = DEFAULT_DEVICE, wait_seconds = 28 }) => {
     const focusPoint = wechatCoordHint(contact_text, "focus");
+    const clipPoint = wechatCoordHint(contact_text, "clip");
     const inputPoint = wechatCoordHint(contact_text, "input");
     const pastePoint = wechatCoordHint(contact_text, "paste");
     const label = wechatContactLabel(contact_text);
@@ -1369,7 +1370,7 @@ function makeServer({ allowedToolNames = null, principal = {} } = {}) {
       const observed = id ? await waitCommand(id, wait_seconds) : null;
       return textResult({ queued: result, observed_status: observed?.command || null, contact_text: label, safety_note: "只写草稿，不发送。未提供视觉坐标时仍使用旧无障碍输入。" });
     }
-    if (inputPoint.x < 80 || inputPoint.x > 980 || inputPoint.y < 700 || inputPoint.y > 2350) throw new Error("微信视觉输入框坐标超出安全范围");
+    if (!clipPoint && (inputPoint.x < 80 || inputPoint.x > 980 || inputPoint.y < 700 || inputPoint.y > 2350)) throw new Error("微信视觉输入框坐标超出安全范围");
     const copied = await postCommand({ action: "copy_takeout_note", device_id, note: text, payload: { note: text } });
     const copyId = copied?.command?.id;
     const copyObserved = copyId ? await waitCommand(copyId, Math.min(10, wait_seconds)) : null;
@@ -1377,11 +1378,13 @@ function makeServer({ allowedToolNames = null, principal = {} } = {}) {
     const steps = [
       { label: "打开双开微信", action: "open_app_profile", app: "微信", package: "com.tencent.mm", index: 2, wait_ms: 2600 }
     ];
-    if (focusPoint) steps.push({ label: "激活微信文字输入框", action: "tap", x: focusPoint.x, y: focusPoint.y, wait_ms: 1000 });
-    steps.push({ label: "点键盘弹出后的输入框", action: "tap", x: inputPoint.x, y: inputPoint.y, wait_ms: 700 });
-    steps.push({ label: "长按微信输入框", action: "swipe", x1: inputPoint.x, y1: inputPoint.y, x2: inputPoint.x, y2: inputPoint.y, duration: 720, wait_ms: 650 });
-    if (pastePoint) {
-      steps.push({ label: "按截图坐标点击粘贴", action: "tap", x: pastePoint.x, y: pastePoint.y, wait_ms: 900 });
+    if (focusPoint) steps.push({ label: "激活微信文字输入框", action: "tap", x: focusPoint.x, y: focusPoint.y, wait_ms: 1100 });
+    if (clipPoint) {
+      steps.push({ label: "点击百度剪贴板内容卡片", action: "tap", x: clipPoint.x, y: clipPoint.y, wait_ms: 1000 });
+    } else {
+      steps.push({ label: "点键盘弹出后的输入框", action: "tap", x: inputPoint.x, y: inputPoint.y, wait_ms: 700 });
+      steps.push({ label: "长按微信输入框", action: "swipe", x1: inputPoint.x, y1: inputPoint.y, x2: inputPoint.x, y2: inputPoint.y, duration: 720, wait_ms: 650 });
+      if (pastePoint) steps.push({ label: "按截图坐标点击粘贴", action: "tap", x: pastePoint.x, y: pastePoint.y, wait_ms: 900 });
     }
     const result = await postCommand({ action: "run_sequence", device_id, steps, payload: { steps, stop_on_error: true }, stop_on_error: true });
     const id = result?.command?.id;
@@ -1393,22 +1396,24 @@ function makeServer({ allowedToolNames = null, principal = {} } = {}) {
       observed_status: observed?.command || null,
       contact_text: label,
       focus_point: focusPoint || null,
-      input_point: inputPoint,
+      clip_point: clipPoint || null,
+      input_point: inputPoint || null,
       paste_point: pastePoint || null,
-      safety_note: pastePoint ? "视觉草稿模式只粘贴文字，绝不点击发送。完成后请截图确认草稿内容。" : "已只长按输入框，未自动点击任何‘粘贴’文字；请先截图定位系统粘贴菜单，再带 paste=x,y 重试。"
+      safety_note: clipPoint ? "已通过百度剪贴板内容卡片写入草稿，绝不点击发送。完成后请截图确认。" : (pastePoint ? "视觉草稿模式只粘贴文字，绝不点击发送。完成后请截图确认草稿内容。" : "已只长按输入框，未自动点击任何‘粘贴’文字；请先截图定位系统粘贴菜单，再带 paste=x,y 重试。")
     });
   });
 
-  server.tool("wechat_send_message", "向双开微信中的指定联系人发送真实消息。仅在用户明确授权这条消息时调用。视觉模式可在 contact_text 后附 |focus=x,y|input=x,y|paste=x,y|send=x,y。", {
+  server.tool("wechat_send_message", "向双开微信中的指定联系人发送真实消息。仅在用户明确授权这条消息时调用。视觉模式优先使用 |focus=x,y|clip=x,y|send=x,y；旧 input/paste 路径继续兼容。", {
     contact_text: z.string().min(1).max(80), text: z.string().min(1).max(500),
     device_id: z.string().default(DEFAULT_DEVICE), wait_seconds: z.number().int().min(5).max(45).default(32)
   }, async ({ contact_text, text, device_id = DEFAULT_DEVICE, wait_seconds = 32 }) => {
     const focusPoint = wechatCoordHint(contact_text, "focus");
+    const clipPoint = wechatCoordHint(contact_text, "clip");
     const inputPoint = wechatCoordHint(contact_text, "input");
     const pastePoint = wechatCoordHint(contact_text, "paste");
     const sendPoint = wechatCoordHint(contact_text, "send");
     const label = wechatContactLabel(contact_text);
-    if (!inputPoint || !sendPoint) {
+    if ((!clipPoint && !inputPoint) || !sendPoint) {
       const steps = [
         { label: "打开双开微信", action: "open_app_profile", app: "微信", package: "com.tencent.mm", index: 2, wait_ms: 3500 },
         { label: "写入微信消息", action: "input_text", package: "com.tencent.mm", text, append: false, wait_ms: 600 },
@@ -1419,7 +1424,7 @@ function makeServer({ allowedToolNames = null, principal = {} } = {}) {
       const observed = id ? await waitCommand(id, wait_seconds) : null;
       return textResult({ queued: result, observed_status: observed?.command || null, contact_text: label, sent_text: text, mode: "accessibility" });
     }
-    if (inputPoint.x < 80 || inputPoint.x > 980 || inputPoint.y < 700 || inputPoint.y > 2350) throw new Error("微信视觉输入框坐标超出安全范围");
+    if (!clipPoint && (inputPoint.x < 80 || inputPoint.x > 980 || inputPoint.y < 700 || inputPoint.y > 2350)) throw new Error("微信视觉输入框坐标超出安全范围");
     if (sendPoint.x < 650 || sendPoint.x > 1080 || sendPoint.y < 700 || sendPoint.y > 2350) throw new Error("微信视觉发送键坐标超出安全范围");
     const copied = await postCommand({ action: "copy_takeout_note", device_id, note: text, payload: { note: text } });
     const copyId = copied?.command?.id;
@@ -1427,11 +1432,15 @@ function makeServer({ allowedToolNames = null, principal = {} } = {}) {
     const steps = [
       { label: "打开双开微信", action: "open_app_profile", app: "微信", package: "com.tencent.mm", index: 2, wait_ms: 2600 }
     ];
-    if (focusPoint) steps.push({ label: "激活微信文字输入框", action: "tap", x: focusPoint.x, y: focusPoint.y, wait_ms: 1000 });
-    steps.push({ label: "点键盘弹出后的输入框", action: "tap", x: inputPoint.x, y: inputPoint.y, wait_ms: 700 });
-    steps.push({ label: "长按微信输入框", action: "swipe", x1: inputPoint.x, y1: inputPoint.y, x2: inputPoint.x, y2: inputPoint.y, duration: 720, wait_ms: 650 });
-    if (!pastePoint) throw new Error("视觉发送必须提供 paste=x,y，禁止按文字自动寻找‘粘贴’");
-    steps.push({ label: "按截图坐标点击粘贴", action: "tap", x: pastePoint.x, y: pastePoint.y, wait_ms: 850 });
+    if (focusPoint) steps.push({ label: "激活微信文字输入框", action: "tap", x: focusPoint.x, y: focusPoint.y, wait_ms: 1100 });
+    if (clipPoint) {
+      steps.push({ label: "点击百度剪贴板内容卡片", action: "tap", x: clipPoint.x, y: clipPoint.y, wait_ms: 1000 });
+    } else {
+      steps.push({ label: "点键盘弹出后的输入框", action: "tap", x: inputPoint.x, y: inputPoint.y, wait_ms: 700 });
+      steps.push({ label: "长按微信输入框", action: "swipe", x1: inputPoint.x, y1: inputPoint.y, x2: inputPoint.x, y2: inputPoint.y, duration: 720, wait_ms: 650 });
+      if (!pastePoint) throw new Error("视觉发送必须提供 clip=x,y 或 paste=x,y");
+      steps.push({ label: "按截图坐标点击粘贴", action: "tap", x: pastePoint.x, y: pastePoint.y, wait_ms: 850 });
+    }
     steps.push({ label: "发送微信消息", action: "tap", x: sendPoint.x, y: sendPoint.y, wait_ms: 900 });
     const result = await postCommand({ action: "run_sequence", device_id, steps, payload: { steps, stop_on_error: true }, stop_on_error: true });
     const id = result?.command?.id;
@@ -1442,9 +1451,10 @@ function makeServer({ allowedToolNames = null, principal = {} } = {}) {
       observed_status: observed?.command || null,
       contact_text: label,
       sent_text: text,
-      mode: "visual_clipboard",
+      mode: clipPoint ? "visual_clipboard_card" : "visual_clipboard",
       focus_point: focusPoint || null,
-      input_point: inputPoint,
+      clip_point: clipPoint || null,
+      input_point: inputPoint || null,
       paste_point: pastePoint || null,
       send_point: sendPoint
     });
