@@ -1351,11 +1351,44 @@ function makeServer({ allowedToolNames = null, principal = {} } = {}) {
     return textResult({ queued: result, observed_status: observed?.command || null, contact_text, note: "只读取当前微信会话页面，不发送消息。" });
   });
 
-  server.tool("wechat_draft_message", "进入当前双开微信会话并把文字写入输入框，但绝不点击发送。使用微信自身可编辑节点直接 ACTION_SET_TEXT；适合先写草稿再截图确认。", {
+  server.tool("wechat_draft_message", "进入当前双开微信会话并把文字写入输入框，但绝不点击发送。默认尝试微信 editable 节点；当 contact_text 带 |focus=x,y|clip=x,y 时，改用百度输入法剪贴板卡片视觉写入。", {
     contact_text: z.string().min(1).max(80), text: z.string().min(1).max(500),
     device_id: z.string().default(DEFAULT_DEVICE), wait_seconds: z.number().int().min(5).max(40).default(28)
   }, async ({ contact_text, text, device_id = DEFAULT_DEVICE, wait_seconds = 28 }) => {
     const label = wechatContactLabel(contact_text);
+    const focusPoint = wechatCoordHint(contact_text, "focus");
+    const clipPoint = wechatCoordHint(contact_text, "clip");
+
+    if (focusPoint && clipPoint) {
+      if (focusPoint.x < 80 || focusPoint.x > 980 || focusPoint.y < 700 || focusPoint.y > 2350) throw new Error("微信视觉输入框坐标超出安全范围");
+      if (clipPoint.x < 0 || clipPoint.x > 1080 || clipPoint.y < 700 || clipPoint.y > 2000) throw new Error("百度剪贴板卡片坐标超出安全范围");
+
+      const copied = await postCommand({ action: "copy_takeout_note", device_id, note: text, payload: { note: text } });
+      const copyId = copied?.command?.id;
+      const copyObserved = copyId ? await waitCommand(copyId, Math.min(10, wait_seconds)) : null;
+      if (copyObserved?.command?.status && copyObserved.command.status !== "completed") throw new Error("写入系统剪贴板失败");
+
+      const steps = [
+        { label: "打开双开微信", action: "open_app_profile", app: "微信", package: "com.tencent.mm", index: 2, wait_ms: 3200 },
+        { label: "激活微信输入框并弹出键盘", action: "tap", x: focusPoint.x, y: focusPoint.y, wait_ms: 1200 },
+        { label: "点击百度剪贴板内容卡片", action: "tap", x: clipPoint.x, y: clipPoint.y, wait_ms: 1100 }
+      ];
+      const result = await postCommand({ action: "run_sequence", device_id, steps, payload: { steps, stop_on_error: true }, stop_on_error: true });
+      const id = result?.command?.id;
+      const observed = id ? await waitCommand(id, wait_seconds) : null;
+      return textResult({
+        queued: result,
+        clipboard: copied,
+        clipboard_status: copyObserved?.command || null,
+        observed_status: observed?.command || null,
+        contact_text: label,
+        mode: "visual_clipboard_card",
+        focus_point: focusPoint,
+        clip_point: clipPoint,
+        safety_note: "只写草稿；不会点击微信发送键。"
+      });
+    }
+
     const steps = [
       { label: "打开双开微信", action: "open_app_profile", app: "微信", package: "com.tencent.mm", index: 2, wait_ms: 3500 },
       { label: "写入微信草稿", action: "input_text", package: "com.tencent.mm", text, append: false, wait_ms: 800 }
@@ -1367,15 +1400,52 @@ function makeServer({ allowedToolNames = null, principal = {} } = {}) {
       queued: result,
       observed_status: observed?.command || null,
       contact_text: label,
-      safety_note: "只写草稿，不点击发送。input_text 直接针对双开微信的可编辑节点。"
+      mode: "accessibility",
+      safety_note: "只写草稿，不点击发送。"
     });
   });
 
-  server.tool("wechat_send_message", "向当前双开微信会话发送一条真实消息。仅在用户明确授权发送这条具体消息时调用；先直接写入微信输入框，再点击“发送”。", {
+  server.tool("wechat_send_message", "向当前双开微信会话发送一条真实消息。仅在用户明确授权发送这条具体消息时调用。可用 |focus=x,y|clip=x,y|send=x,y 走视觉剪贴板+发送坐标；否则使用旧无障碍发送。", {
     contact_text: z.string().min(1).max(80), text: z.string().min(1).max(500),
     device_id: z.string().default(DEFAULT_DEVICE), wait_seconds: z.number().int().min(5).max(45).default(32)
   }, async ({ contact_text, text, device_id = DEFAULT_DEVICE, wait_seconds = 32 }) => {
     const label = wechatContactLabel(contact_text);
+    const focusPoint = wechatCoordHint(contact_text, "focus");
+    const clipPoint = wechatCoordHint(contact_text, "clip");
+    const sendPoint = wechatCoordHint(contact_text, "send");
+
+    if (focusPoint && clipPoint && sendPoint) {
+      if (focusPoint.x < 80 || focusPoint.x > 980 || focusPoint.y < 700 || focusPoint.y > 2350) throw new Error("微信视觉输入框坐标超出安全范围");
+      if (clipPoint.x < 0 || clipPoint.x > 1080 || clipPoint.y < 700 || clipPoint.y > 2000) throw new Error("百度剪贴板卡片坐标超出安全范围");
+      if (sendPoint.x < 650 || sendPoint.x > 1080 || sendPoint.y < 1800 || sendPoint.y > 2350) throw new Error("微信视觉发送键坐标超出安全范围");
+
+      const copied = await postCommand({ action: "copy_takeout_note", device_id, note: text, payload: { note: text } });
+      const copyId = copied?.command?.id;
+      const copyObserved = copyId ? await waitCommand(copyId, Math.min(10, wait_seconds)) : null;
+      if (copyObserved?.command?.status && copyObserved.command.status !== "completed") throw new Error("写入系统剪贴板失败");
+
+      const steps = [
+        { label: "打开双开微信", action: "open_app_profile", app: "微信", package: "com.tencent.mm", index: 2, wait_ms: 3200 },
+        { label: "激活微信输入框并弹出键盘", action: "tap", x: focusPoint.x, y: focusPoint.y, wait_ms: 1200 },
+        { label: "点击百度剪贴板内容卡片", action: "tap", x: clipPoint.x, y: clipPoint.y, wait_ms: 900 },
+        { label: "发送微信消息", action: "tap", x: sendPoint.x, y: sendPoint.y, wait_ms: 900 }
+      ];
+      const result = await postCommand({ action: "run_sequence", device_id, steps, payload: { steps, stop_on_error: true }, stop_on_error: true });
+      const id = result?.command?.id;
+      const observed = id ? await waitCommand(id, wait_seconds) : null;
+      return textResult({
+        queued: result,
+        clipboard_status: copyObserved?.command || null,
+        observed_status: observed?.command || null,
+        contact_text: label,
+        sent_text: text,
+        mode: "visual_clipboard_card",
+        focus_point: focusPoint,
+        clip_point: clipPoint,
+        send_point: sendPoint
+      });
+    }
+
     const steps = [
       { label: "打开双开微信", action: "open_app_profile", app: "微信", package: "com.tencent.mm", index: 2, wait_ms: 3500 },
       { label: "写入微信消息", action: "input_text", package: "com.tencent.mm", text, append: false, wait_ms: 800 },
@@ -1384,7 +1454,7 @@ function makeServer({ allowedToolNames = null, principal = {} } = {}) {
     const result = await postCommand({ action: "run_sequence", device_id, steps, payload: { steps, stop_on_error: true }, stop_on_error: true });
     const id = result?.command?.id;
     const observed = id ? await waitCommand(id, wait_seconds) : null;
-    return textResult({ queued: result, observed_status: observed?.command || null, contact_text: label, sent_text: text });
+    return textResult({ queued: result, observed_status: observed?.command || null, contact_text: label, sent_text: text, mode: "accessibility" });
   });
 
 
