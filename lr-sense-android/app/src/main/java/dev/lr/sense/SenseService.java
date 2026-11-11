@@ -234,6 +234,109 @@ public class SenseService extends Service implements SensorEventListener, Locati
         return out;
     }
 
+    private boolean hasUsageAccess() {
+        try {
+            android.app.AppOpsManager appOps = (android.app.AppOpsManager) getSystemService(Context.APP_OPS_SERVICE);
+            int mode = appOps.checkOpNoThrow(
+                android.app.AppOpsManager.OPSTR_GET_USAGE_STATS,
+                android.os.Process.myUid(),
+                getPackageName()
+            );
+            return mode == android.app.AppOpsManager.MODE_ALLOWED;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private void addActionSync(JSONObject out) throws Exception {
+        if (!prefs().getBoolean("action_sync_enabled", true)) {
+            out.put("actionSyncEnabled", false);
+            return;
+        }
+        out.put("actionSyncEnabled", true);
+
+        android.os.PowerManager pm = (android.os.PowerManager) getSystemService(POWER_SERVICE);
+        out.put("screenInteractive", pm != null && pm.isInteractive());
+
+        boolean headphonesConnected = false;
+        String audioRoute = "speaker";
+        try {
+            android.media.AudioManager am = (android.media.AudioManager) getSystemService(AUDIO_SERVICE);
+            android.media.AudioDeviceInfo[] devices = am.getDevices(android.media.AudioManager.GET_DEVICES_OUTPUTS);
+            for (android.media.AudioDeviceInfo d : devices) {
+                int t = d.getType();
+                if (t == android.media.AudioDeviceInfo.TYPE_WIRED_HEADPHONES ||
+                    t == android.media.AudioDeviceInfo.TYPE_WIRED_HEADSET ||
+                    t == android.media.AudioDeviceInfo.TYPE_BLUETOOTH_A2DP ||
+                    t == android.media.AudioDeviceInfo.TYPE_BLUETOOTH_SCO ||
+                    (Build.VERSION.SDK_INT >= 31 && t == android.media.AudioDeviceInfo.TYPE_BLE_HEADSET) ||
+                    t == android.media.AudioDeviceInfo.TYPE_USB_HEADSET) {
+                    headphonesConnected = true;
+                    if (t == android.media.AudioDeviceInfo.TYPE_BLUETOOTH_A2DP ||
+                        t == android.media.AudioDeviceInfo.TYPE_BLUETOOTH_SCO ||
+                        (Build.VERSION.SDK_INT >= 31 && t == android.media.AudioDeviceInfo.TYPE_BLE_HEADSET)) {
+                        audioRoute = "bluetooth_headset";
+                    } else if (t == android.media.AudioDeviceInfo.TYPE_USB_HEADSET) {
+                        audioRoute = "usb_headset";
+                    } else {
+                        audioRoute = "wired_headset";
+                    }
+                    break;
+                }
+            }
+        } catch (Exception ignored) {}
+        out.put("headphonesConnected", headphonesConnected);
+        out.put("audioRoute", audioRoute);
+
+        boolean usageGranted = hasUsageAccess();
+        out.put("usageAccessGranted", usageGranted);
+        if (!usageGranted) return;
+
+        try {
+            android.app.usage.UsageStatsManager usm =
+                (android.app.usage.UsageStatsManager) getSystemService(Context.USAGE_STATS_SERVICE);
+            long now = System.currentTimeMillis();
+            long since = now - 24L * 60L * 60L * 1000L;
+            java.util.List<android.app.usage.UsageStats> stats =
+                usm.queryUsageStats(android.app.usage.UsageStatsManager.INTERVAL_DAILY, since, now);
+
+            android.app.usage.UsageStats latest = null;
+            if (stats != null) {
+                for (android.app.usage.UsageStats s : stats) {
+                    if (s.getTotalTimeInForeground() <= 0) continue;
+                    if (latest == null || s.getLastTimeUsed() > latest.getLastTimeUsed()) latest = s;
+                }
+            }
+
+            if (latest != null) {
+                out.put("foregroundApp", latest.getPackageName());
+                out.put("foregroundAppMinutes24h", Math.round(latest.getTotalTimeInForeground() / 60000.0));
+            }
+
+            if (stats != null) {
+                java.util.Collections.sort(stats, new java.util.Comparator<android.app.usage.UsageStats>() {
+                    @Override
+                    public int compare(android.app.usage.UsageStats a, android.app.usage.UsageStats b) {
+                        return Long.compare(b.getTotalTimeInForeground(), a.getTotalTimeInForeground());
+                    }
+                });
+                org.json.JSONArray top = new org.json.JSONArray();
+                int added = 0;
+                for (android.app.usage.UsageStats s : stats) {
+                    if (s.getTotalTimeInForeground() <= 0) continue;
+                    if (getPackageName().equals(s.getPackageName())) continue;
+                    JSONObject item = new JSONObject();
+                    item.put("package", s.getPackageName());
+                    item.put("minutes", Math.round(s.getTotalTimeInForeground() / 60000.0));
+                    top.put(item);
+                    added++;
+                    if (added >= 5) break;
+                }
+                out.put("topApps24h", top.toString());
+            }
+        } catch (Exception ignored) {}
+    }
+
     private void addDeviceVitals(JSONObject out) throws Exception {
         out.put("deviceModel", Build.MODEL);
         out.put("deviceManufacturer", Build.MANUFACTURER);
@@ -273,6 +376,7 @@ public class SenseService extends Service implements SensorEventListener, Locati
         try {
             batteryJson(payload);
             addDeviceVitals(payload);
+            addActionSync(payload);
 
             if (lightLux != null) payload.put("lightLux", lightLux);
             if (lightSensorDiagnostics != null) payload.put("lightSensorDiagnostics", lightSensorDiagnostics);
