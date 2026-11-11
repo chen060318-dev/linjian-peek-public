@@ -1320,11 +1320,15 @@ function makeServer({ allowedToolNames = null, principal = {} } = {}) {
     contact_text: z.string().min(1).max(80), device_id: z.string().default(DEFAULT_DEVICE), wait_seconds: z.number().int().min(5).max(40).default(26)
   }, async ({ contact_text, device_id = DEFAULT_DEVICE, wait_seconds = 26 }) => {
     const visualTap = wechatCoordHint(contact_text, "tap");
+    const visualHold = wechatCoordHint(contact_text, "hold");
     const label = wechatContactLabel(contact_text);
     const steps = [
       { label: "打开双开微信", action: "open_app_profile", app: "微信", package: "com.tencent.mm", index: 2, wait_ms: 2800 }
     ];
-    if (visualTap) {
+    if (visualHold) {
+      if (visualHold.x < 0 || visualHold.x > 1080 || visualHold.y < 120 || visualHold.y > 2390) throw new Error("微信视觉长按坐标超出 1080×2400 屏幕安全范围");
+      steps.push({ label: "按截图坐标长按", action: "swipe", x1: visualHold.x, y1: visualHold.y, x2: visualHold.x, y2: visualHold.y, duration: 780, wait_ms: 1400 });
+    } else if (visualTap) {
       if (visualTap.x < 0 || visualTap.x > 1080 || visualTap.y < 120 || visualTap.y > 2390) throw new Error("微信视觉坐标超出 1080×2400 屏幕安全范围");
       steps.push({ label: "按截图坐标打开会话", action: "tap", x: visualTap.x, y: visualTap.y, wait_ms: 1400 });
     } else {
@@ -1333,7 +1337,7 @@ function makeServer({ allowedToolNames = null, principal = {} } = {}) {
     const result = await postCommand({ action: "run_sequence", device_id, steps, payload: { steps, stop_on_error: true }, stop_on_error: true });
     const id = result?.command?.id;
     const observed = id ? await waitCommand(id, wait_seconds) : null;
-    return textResult({ queued: result, observed_status: observed?.command || null, contact_text: label, visual_tap: visualTap || null });
+    return textResult({ queued: result, observed_status: observed?.command || null, contact_text: label, visual_tap: visualTap || null, visual_hold: visualHold || null });
   });
 
   server.tool("wechat_read_chat", "进入指定双开微信会话并读取当前页面无障碍节点；只读，不发送消息。", {
