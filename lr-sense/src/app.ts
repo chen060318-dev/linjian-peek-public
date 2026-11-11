@@ -48,6 +48,7 @@ type SensorState = {
 
   lightLux: number | null;
   lightSensorDiagnostics: string | null;
+  lightSensorEvents: string | null;
   soundScene: string | null;
   soundConfidence: number | null;
   motionState: string | null;
@@ -379,6 +380,7 @@ async function buildSnapshot() {
       lightLux: latestSensor.lightLux,
       lightDescription: light,
       lightSensorDiagnostics: latestSensor.lightSensorDiagnostics,
+      lightSensorEvents: latestSensor.lightSensorEvents,
       soundScene: latestSensor.soundScene,
       soundConfidence: latestSensor.soundConfidence,
       motionState: latestSensor.motionState,
@@ -427,6 +429,7 @@ const sensorInput = z
 
     lightLux: z.number().min(0).max(500000).optional(),
     lightSensorDiagnostics: z.string().trim().min(1).max(4000).optional(),
+    lightSensorEvents: z.string().trim().min(1).max(12000).optional(),
     soundScene: optionalString,
     soundConfidence: z.number().min(0).max(1).optional(),
     motionState: optionalString,
@@ -478,6 +481,8 @@ function mergeSensor(incoming: z.infer<typeof sensorInput>, now: string): Sensor
     lightLux: incoming.lightLux ?? old?.lightLux ?? null,
     lightSensorDiagnostics:
       incoming.lightSensorDiagnostics ?? old?.lightSensorDiagnostics ?? null,
+    lightSensorEvents:
+      incoming.lightSensorEvents ?? old?.lightSensorEvents ?? null,
     soundScene: incoming.soundScene ?? old?.soundScene ?? null,
     soundConfidence: incoming.soundConfidence ?? old?.soundConfidence ?? null,
     motionState: incoming.motionState ?? old?.motionState ?? null,
@@ -638,6 +643,7 @@ export function createServer(): McpServer {
         lightLux: latestSensor?.lightLux ?? null,
         description: lightSummary(latestSensor?.lightLux ?? null),
         diagnostics: latestSensor?.lightSensorDiagnostics ?? null,
+        events: latestSensor?.lightSensorEvents ?? null,
         note:
           latestSensor?.lightLux === null || latestSensor?.lightLux === undefined
             ? "Reserved for the future Android sensor uploader."
