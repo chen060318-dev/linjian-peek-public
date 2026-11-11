@@ -1473,7 +1473,7 @@ function makeServer({ allowedToolNames = null, principal = {} } = {}) {
     device_id: z.string().default(DEFAULT_DEVICE), wait_seconds: z.number().int().min(5).max(30).default(18)
   }, async ({ device_id = DEFAULT_DEVICE, wait_seconds = 18 }) => {
     const steps = [
-      { label: "打开抖音", action: "open_app", app: "抖音", package: "com.ss.android.ugc.aweme", wait_ms: 1800 },
+      { label: "打开双开抖音", action: "open_app_profile", app: "抖音", package: "com.ss.android.ugc.aweme", index: 2, wait_ms: 1800 },
       { label: "进入消息页", action: "tap_text", package: "com.ss.android.ugc.aweme", target_text: "消息", match: "exact", wait_ms: 1600 }
     ];
     const result = await postCommand({ action: "run_sequence", device_id, steps, payload: { steps, stop_on_error: false }, stop_on_error: false });
@@ -1486,7 +1486,7 @@ function makeServer({ allowedToolNames = null, principal = {} } = {}) {
     contact_text: z.string().min(1).max(80), device_id: z.string().default(DEFAULT_DEVICE), wait_seconds: z.number().int().min(5).max(35).default(22)
   }, async ({ contact_text, device_id = DEFAULT_DEVICE, wait_seconds = 22 }) => {
     const steps = [
-      { label: "打开抖音", action: "open_app", app: "抖音", package: "com.ss.android.ugc.aweme", wait_ms: 1800 },
+      { label: "打开双开抖音", action: "open_app_profile", app: "抖音", package: "com.ss.android.ugc.aweme", index: 2, wait_ms: 1800 },
       { label: "进入消息页", action: "tap_text", package: "com.ss.android.ugc.aweme", target_text: "消息", match: "exact", wait_ms: 1600 },
       { label: "打开指定聊天", action: "tap_text", package: "com.ss.android.ugc.aweme", target_text: contact_text, match: "contains", wait_ms: 1600 }
     ];
@@ -1500,7 +1500,7 @@ function makeServer({ allowedToolNames = null, principal = {} } = {}) {
     contact_text: z.string().min(1).max(80), device_id: z.string().default(DEFAULT_DEVICE), wait_seconds: z.number().int().min(5).max(35).default(24)
   }, async ({ contact_text, device_id = DEFAULT_DEVICE, wait_seconds = 24 }) => {
     const steps = [
-      { label: "打开抖音", action: "open_app", app: "抖音", package: "com.ss.android.ugc.aweme", wait_ms: 1800 },
+      { label: "打开双开抖音", action: "open_app_profile", app: "抖音", package: "com.ss.android.ugc.aweme", index: 2, wait_ms: 1800 },
       { label: "进入消息页", action: "tap_text", package: "com.ss.android.ugc.aweme", target_text: "消息", match: "exact", wait_ms: 1500 },
       { label: "打开指定聊天", action: "tap_text", package: "com.ss.android.ugc.aweme", target_text: contact_text, match: "contains", wait_ms: 1400 },
       { label: "读取聊天页", action: "get_screen_nodes", package: "com.ss.android.ugc.aweme", wait_ms: 300 }
@@ -1516,7 +1516,7 @@ function makeServer({ allowedToolNames = null, principal = {} } = {}) {
     device_id: z.string().default(DEFAULT_DEVICE), wait_seconds: z.number().int().min(5).max(35).default(24)
   }, async ({ contact_text, text, device_id = DEFAULT_DEVICE, wait_seconds = 24 }) => {
     const steps = [
-      { label: "打开抖音", action: "open_app", app: "抖音", package: "com.ss.android.ugc.aweme", wait_ms: 1800 },
+      { label: "打开双开抖音", action: "open_app_profile", app: "抖音", package: "com.ss.android.ugc.aweme", index: 2, wait_ms: 1800 },
       { label: "进入消息页", action: "tap_text", package: "com.ss.android.ugc.aweme", target_text: "消息", match: "exact", wait_ms: 1500 },
       { label: "打开指定聊天", action: "tap_text", package: "com.ss.android.ugc.aweme", target_text: contact_text, match: "contains", wait_ms: 1400 },
       { label: "写入私信草稿", action: "input_text", package: "com.ss.android.ugc.aweme", text, append: false, wait_ms: 600 }
@@ -1532,7 +1532,7 @@ function makeServer({ allowedToolNames = null, principal = {} } = {}) {
     device_id: z.string().default(DEFAULT_DEVICE), wait_seconds: z.number().int().min(5).max(40).default(28)
   }, async ({ contact_text, text, device_id = DEFAULT_DEVICE, wait_seconds = 28 }) => {
     const steps = [
-      { label: "打开抖音", action: "open_app", app: "抖音", package: "com.ss.android.ugc.aweme", wait_ms: 1800 },
+      { label: "打开双开抖音", action: "open_app_profile", app: "抖音", package: "com.ss.android.ugc.aweme", index: 2, wait_ms: 1800 },
       { label: "进入消息页", action: "tap_text", package: "com.ss.android.ugc.aweme", target_text: "消息", match: "exact", wait_ms: 1500 },
       { label: "打开指定聊天", action: "tap_text", package: "com.ss.android.ugc.aweme", target_text: contact_text, match: "contains", wait_ms: 1400 },
       { label: "写入私信", action: "input_text", package: "com.ss.android.ugc.aweme", text, append: false, wait_ms: 500 },
