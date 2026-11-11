@@ -1249,7 +1249,8 @@ function makeServer({ allowedToolNames = null, principal = {} } = {}) {
   }, async ({ device_id = DEFAULT_DEVICE, wait_seconds = 22 }) => {
     const steps = [
       { label: "打开双开微信", action: "open_app_profile", app: "微信", package: "com.tencent.mm", index: 2, wait_ms: 5000 },
-      { label: "读取微信页面", action: "get_screen_nodes", package: "com.tencent.mm", wait_ms: 500 }
+      { label: "读取微信页面", action: "get_screen_nodes", package: "com.tencent.mm", wait_ms: 500 },
+      { label: "诊断全部可见窗口", action: "get_screen_nodes", wait_ms: 500 }
     ];
     const result = await postCommand({ action: "run_sequence", device_id, steps, payload: { steps, stop_on_error: false }, stop_on_error: false });
     const id = result?.command?.id;
