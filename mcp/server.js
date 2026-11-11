@@ -1159,13 +1159,15 @@ const COMPANION_ALLOWED_TOOLS = new Set([
   "peek_screen", "latest_screen", "linjian_status",
   "get_screen_break_state", "screen_break_app", "temporary_screen_break_release",
   "end_screen_break", "extend_screen_break", "deny_screen_break_release_request",
-  "list_screen_break_apps", "list_lockable_apps"
+  "list_screen_break_apps", "list_lockable_apps",
+  "douyin_open_messages", "douyin_open_chat", "douyin_check_streak", "douyin_draft_message", "douyin_send_message"
 ]);
 
 function makeServer({ allowedToolNames = null, principal = {} } = {}) {
-  const server = new McpServer({ name: "掌心窗", version: "0.3.9.0" });
+  const server = new McpServer({ name: "掌心窗", version: "0.3.9.1" });
   const commandBackedTools = new Set([
     "peek_screen", "get_screen_nodes", "tap_text", "input_text", "draft_xhs_comment", "xhs_comment", "send_visible_comment_after_confirmation",
+    "douyin_open_messages", "douyin_open_chat", "douyin_check_streak", "douyin_draft_message", "douyin_send_message",
     "add_guardian_calendar_event", "care_action", "trigger_guidian", "mark_guidian_returned",
     "set_guidian_config", "send_weather_notification", "send_phone_command", "open_app", "phone_home", "phone_back", "phone_recents",
     "phone_screen_off", "send_notification", "set_alarm", "run_sequence", "run_preset", "save_known_app", "screen_break_app",
@@ -1456,6 +1458,82 @@ function makeServer({ allowedToolNames = null, principal = {} } = {}) {
     const id = result?.command?.id;
     const observed = id ? await waitCommand(id, wait_seconds) : null;
     return { content: [{ type: "text", text: JSON.stringify({ queued: result, observed_status: observed?.command || null, note: "只输入草稿，不会发送。" }, null, 2) }] };
+  });
+
+
+  server.tool("douyin_open_messages", "打开抖音并进入消息页。仅用于抖音，不暴露任意点击能力。", {
+    device_id: z.string().default(DEFAULT_DEVICE), wait_seconds: z.number().int().min(5).max(30).default(18)
+  }, async ({ device_id = DEFAULT_DEVICE, wait_seconds = 18 }) => {
+    const steps = [
+      { label: "打开抖音", action: "open_app", app: "抖音", package: "com.ss.android.ugc.aweme", wait_ms: 1800 },
+      { label: "进入消息页", action: "tap_text", target_text: "消息", match: "exact", wait_ms: 1600 }
+    ];
+    const result = await postCommand({ action: "run_sequence", device_id, steps, payload: { steps, stop_on_error: false }, stop_on_error: false });
+    const id = result?.command?.id;
+    const observed = id ? await waitCommand(id, wait_seconds) : null;
+    return textResult({ queued: result, observed_status: observed?.command || null });
+  });
+
+  server.tool("douyin_open_chat", "打开抖音消息页并进入指定联系人会话。contact_text 必须是聊天列表里可见的昵称或备注。", {
+    contact_text: z.string().min(1).max(80), device_id: z.string().default(DEFAULT_DEVICE), wait_seconds: z.number().int().min(5).max(35).default(22)
+  }, async ({ contact_text, device_id = DEFAULT_DEVICE, wait_seconds = 22 }) => {
+    const steps = [
+      { label: "打开抖音", action: "open_app", app: "抖音", package: "com.ss.android.ugc.aweme", wait_ms: 1800 },
+      { label: "进入消息页", action: "tap_text", target_text: "消息", match: "exact", wait_ms: 1600 },
+      { label: "打开指定聊天", action: "tap_text", target_text: contact_text, match: "contains", wait_ms: 1600 }
+    ];
+    const result = await postCommand({ action: "run_sequence", device_id, steps, payload: { steps, stop_on_error: false }, stop_on_error: false });
+    const id = result?.command?.id;
+    const observed = id ? await waitCommand(id, wait_seconds) : null;
+    return textResult({ queued: result, observed_status: observed?.command || null, contact_text });
+  });
+
+  server.tool("douyin_check_streak", "进入指定抖音聊天并读取当前屏幕无障碍节点，用来判断聊天页是否出现火花/续火花/连续聊天等提示；只读，不发送消息。", {
+    contact_text: z.string().min(1).max(80), device_id: z.string().default(DEFAULT_DEVICE), wait_seconds: z.number().int().min(5).max(35).default(24)
+  }, async ({ contact_text, device_id = DEFAULT_DEVICE, wait_seconds = 24 }) => {
+    const steps = [
+      { label: "打开抖音", action: "open_app", app: "抖音", package: "com.ss.android.ugc.aweme", wait_ms: 1800 },
+      { label: "进入消息页", action: "tap_text", target_text: "消息", match: "exact", wait_ms: 1500 },
+      { label: "打开指定聊天", action: "tap_text", target_text: contact_text, match: "contains", wait_ms: 1400 },
+      { label: "读取聊天页", action: "get_screen_nodes", wait_ms: 300 }
+    ];
+    const result = await postCommand({ action: "run_sequence", device_id, steps, payload: { steps, stop_on_error: false }, stop_on_error: false });
+    const id = result?.command?.id;
+    const observed = id ? await waitCommand(id, wait_seconds) : null;
+    return textResult({ queued: result, observed_status: observed?.command || null, contact_text, note: "最后一步结果包含聊天页节点，可据此识别火花文案；不会发送消息。" });
+  });
+
+  server.tool("douyin_draft_message", "进入指定抖音聊天并把文字写入输入框，但绝不点击发送。", {
+    contact_text: z.string().min(1).max(80), text: z.string().min(1).max(500),
+    device_id: z.string().default(DEFAULT_DEVICE), wait_seconds: z.number().int().min(5).max(35).default(24)
+  }, async ({ contact_text, text, device_id = DEFAULT_DEVICE, wait_seconds = 24 }) => {
+    const steps = [
+      { label: "打开抖音", action: "open_app", app: "抖音", package: "com.ss.android.ugc.aweme", wait_ms: 1800 },
+      { label: "进入消息页", action: "tap_text", target_text: "消息", match: "exact", wait_ms: 1500 },
+      { label: "打开指定聊天", action: "tap_text", target_text: contact_text, match: "contains", wait_ms: 1400 },
+      { label: "写入私信草稿", action: "input_text", text, append: false, wait_ms: 600 }
+    ];
+    const result = await postCommand({ action: "run_sequence", device_id, steps, payload: { steps, stop_on_error: false }, stop_on_error: false });
+    const id = result?.command?.id;
+    const observed = id ? await waitCommand(id, wait_seconds) : null;
+    return textResult({ queued: result, observed_status: observed?.command || null, contact_text, safety_note: "只写草稿，不发送。" });
+  });
+
+  server.tool("douyin_send_message", "向指定抖音联系人发送一条私信，可用于续火花。该工具会真实点击发送；只应在用户授权发送时调用。", {
+    contact_text: z.string().min(1).max(80), text: z.string().min(1).max(500),
+    device_id: z.string().default(DEFAULT_DEVICE), wait_seconds: z.number().int().min(5).max(40).default(28)
+  }, async ({ contact_text, text, device_id = DEFAULT_DEVICE, wait_seconds = 28 }) => {
+    const steps = [
+      { label: "打开抖音", action: "open_app", app: "抖音", package: "com.ss.android.ugc.aweme", wait_ms: 1800 },
+      { label: "进入消息页", action: "tap_text", target_text: "消息", match: "exact", wait_ms: 1500 },
+      { label: "打开指定聊天", action: "tap_text", target_text: contact_text, match: "contains", wait_ms: 1400 },
+      { label: "写入私信", action: "input_text", text, append: false, wait_ms: 500 },
+      { label: "发送私信", action: "tap_text", target_text: "发送", match: "exact", wait_ms: 700 }
+    ];
+    const result = await postCommand({ action: "run_sequence", device_id, steps, payload: { steps, stop_on_error: true }, stop_on_error: true });
+    const id = result?.command?.id;
+    const observed = id ? await waitCommand(id, wait_seconds) : null;
+    return textResult({ queued: result, observed_status: observed?.command || null, contact_text, sent_text: text });
   });
 
   server.tool("draft_xhs_comment", "在当前小红书帖子里尝试打开评论输入框并填入评论草稿，但不点击发送。当用户说“帮我写评论/先填进去/评论草稿”或类似表达时主动调用。", {
