@@ -242,8 +242,23 @@ public class SenseService extends Service implements SensorEventListener, Locati
                 android.os.Process.myUid(),
                 getPackageName()
             );
-            return mode == android.app.AppOpsManager.MODE_ALLOWED;
-        } catch (Exception e) {
+            if (mode == android.app.AppOpsManager.MODE_ALLOWED) return true;
+        } catch (Exception ignored) {}
+
+        // HyperOS / newer Android versions may report MODE_DEFAULT even when the
+        // user-facing Usage Access toggle is enabled. Verify by actually querying stats.
+        try {
+            android.app.usage.UsageStatsManager usm =
+                (android.app.usage.UsageStatsManager) getSystemService(Context.USAGE_STATS_SERVICE);
+            long now = System.currentTimeMillis();
+            java.util.List<android.app.usage.UsageStats> stats =
+                usm.queryUsageStats(
+                    android.app.usage.UsageStatsManager.INTERVAL_DAILY,
+                    now - 60L * 60L * 1000L,
+                    now
+                );
+            return stats != null && !stats.isEmpty();
+        } catch (Exception ignored) {
             return false;
         }
     }
