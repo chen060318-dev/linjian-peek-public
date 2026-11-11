@@ -1246,6 +1246,15 @@ function makeServer({ allowedToolNames = null, principal = {} } = {}) {
     });
   }
 
+  function wechatCoordHint(raw, key) {
+    const m = String(raw || "").match(new RegExp("(?:^|\\\\|)" + key + "=(\\\\d{1,4}),(\\\\d{1,4})(?:\\\\||$)"));
+    if (!m) return null;
+    return { x: Number(m[1]), y: Number(m[2]) };
+  }
+  function wechatContactLabel(raw) {
+    return String(raw || "").split("|")[0].trim();
+  }
+
   // WeChat tools are intentionally registered early because some clients only ingest the first tool schemas.
   server.tool("wechat_visual_nav", "双开微信的视觉导航工具。用于截图识别后的返回、点按会话或上下滚动；不依赖微信无障碍节点。tap 模式硬限制在屏幕上方安全区域，禁止触碰输入框、键盘与发送区域。", {
     mode: z.enum(["back", "tap", "swipe_up", "swipe_down"]),
@@ -1294,31 +1303,37 @@ function makeServer({ allowedToolNames = null, principal = {} } = {}) {
     return textResult({ queued: result, observed_status: observed?.command || null, note: "仅打开双开微信并读取页面，不会发送消息。" });
   });
 
-  server.tool("wechat_open_chats", "打开双开微信并进入微信聊天列表。仅操作双开实例，不操作主微信。", {
+  server.tool("wechat_open_chats", "打开双开微信并返回聊天列表。该工具用于视觉模式：调用前应先用截图确认当前确实位于某个会话页；仅操作双开实例。", {
     device_id: z.string().default(DEFAULT_DEVICE), wait_seconds: z.number().int().min(5).max(35).default(22)
   }, async ({ device_id = DEFAULT_DEVICE, wait_seconds = 22 }) => {
     const steps = [
-      { label: "打开双开微信", action: "open_app_profile", app: "微信", package: "com.tencent.mm", index: 2, wait_ms: 5000 },
-      { label: "进入微信聊天页", action: "tap_text", package: "com.tencent.mm", target_text: "微信", match: "exact", wait_ms: 1600 }
+      { label: "打开双开微信", action: "open_app_profile", app: "微信", package: "com.tencent.mm", index: 2, wait_ms: 3500 },
+      { label: "从当前会话返回聊天列表", action: "back", wait_ms: 1200 }
     ];
-    const result = await postCommand({ action: "run_sequence", device_id, steps, payload: { steps, stop_on_error: false }, stop_on_error: false });
+    const result = await postCommand({ action: "run_sequence", device_id, steps, payload: { steps, stop_on_error: true }, stop_on_error: true });
     const id = result?.command?.id;
     const observed = id ? await waitCommand(id, wait_seconds) : null;
-    return textResult({ queued: result, observed_status: observed?.command || null });
+    return textResult({ queued: result, observed_status: observed?.command || null, note: "视觉模式：只在已确认当前处于会话页时调用；操作后请读取 latest_screen 复核。" });
   });
 
-  server.tool("wechat_open_chat", "打开双开微信聊天列表并进入指定联系人会话。contact_text 必须是双开微信聊天列表中可见的昵称或备注。", {
+  server.tool("wechat_open_chat", "打开双开微信中的指定会话。普通联系人名仍尝试无障碍；视觉模式可在 contact_text 后附 |tap=x,y，由截图确认坐标后直接点会话行。", {
     contact_text: z.string().min(1).max(80), device_id: z.string().default(DEFAULT_DEVICE), wait_seconds: z.number().int().min(5).max(40).default(26)
   }, async ({ contact_text, device_id = DEFAULT_DEVICE, wait_seconds = 26 }) => {
+    const visualTap = wechatCoordHint(contact_text, "tap");
+    const label = wechatContactLabel(contact_text);
     const steps = [
-      { label: "打开双开微信", action: "open_app_profile", app: "微信", package: "com.tencent.mm", index: 2, wait_ms: 5000 },
-      { label: "进入微信聊天页", action: "tap_text", package: "com.tencent.mm", target_text: "微信", match: "exact", wait_ms: 1500 },
-      { label: "打开指定聊天", action: "tap_text", package: "com.tencent.mm", target_text: contact_text, match: "contains", wait_ms: 1600 }
+      { label: "打开双开微信", action: "open_app_profile", app: "微信", package: "com.tencent.mm", index: 2, wait_ms: 2800 }
     ];
-    const result = await postCommand({ action: "run_sequence", device_id, steps, payload: { steps, stop_on_error: false }, stop_on_error: false });
+    if (visualTap) {
+      if (visualTap.x < 0 || visualTap.x > 1080 || visualTap.y < 120 || visualTap.y > 1850) throw new Error("微信视觉会话坐标超出安全范围");
+      steps.push({ label: "按截图坐标打开会话", action: "tap", x: visualTap.x, y: visualTap.y, wait_ms: 1400 });
+    } else {
+      steps.push({ label: "按文字打开指定聊天", action: "tap_text", package: "com.tencent.mm", target_text: label, match: "contains", wait_ms: 1600 });
+    }
+    const result = await postCommand({ action: "run_sequence", device_id, steps, payload: { steps, stop_on_error: true }, stop_on_error: true });
     const id = result?.command?.id;
     const observed = id ? await waitCommand(id, wait_seconds) : null;
-    return textResult({ queued: result, observed_status: observed?.command || null, contact_text });
+    return textResult({ queued: result, observed_status: observed?.command || null, contact_text: label, visual_tap: visualTap || null });
   });
 
   server.tool("wechat_read_chat", "进入指定双开微信会话并读取当前页面无障碍节点；只读，不发送消息。", {
@@ -1336,37 +1351,99 @@ function makeServer({ allowedToolNames = null, principal = {} } = {}) {
     return textResult({ queued: result, observed_status: observed?.command || null, contact_text, note: "只读取当前微信会话页面，不发送消息。" });
   });
 
-  server.tool("wechat_draft_message", "进入指定双开微信会话并把文字写入输入框，但绝不点击发送。", {
+  server.tool("wechat_draft_message", "把文字写进双开微信当前会话输入框，但绝不点击发送。视觉模式可在 contact_text 后附 |input=x,y；会复用系统剪贴板并长按粘贴，不依赖微信无障碍节点。", {
     contact_text: z.string().min(1).max(80), text: z.string().min(1).max(500),
     device_id: z.string().default(DEFAULT_DEVICE), wait_seconds: z.number().int().min(5).max(40).default(28)
   }, async ({ contact_text, text, device_id = DEFAULT_DEVICE, wait_seconds = 28 }) => {
+    const inputPoint = wechatCoordHint(contact_text, "input");
+    const pastePoint = wechatCoordHint(contact_text, "paste");
+    const label = wechatContactLabel(contact_text);
+    if (!inputPoint) {
+      const steps = [
+        { label: "打开双开微信", action: "open_app_profile", app: "微信", package: "com.tencent.mm", index: 2, wait_ms: 3500 },
+        { label: "写入微信草稿", action: "input_text", package: "com.tencent.mm", text, append: false, wait_ms: 700 }
+      ];
+      const result = await postCommand({ action: "run_sequence", device_id, steps, payload: { steps, stop_on_error: false }, stop_on_error: false });
+      const id = result?.command?.id;
+      const observed = id ? await waitCommand(id, wait_seconds) : null;
+      return textResult({ queued: result, observed_status: observed?.command || null, contact_text: label, safety_note: "只写草稿，不发送。未提供视觉坐标时仍使用旧无障碍输入。" });
+    }
+    if (inputPoint.x < 80 || inputPoint.x > 980 || inputPoint.y < 700 || inputPoint.y > 2260) throw new Error("微信视觉输入框坐标超出安全范围");
+    const copied = await postCommand({ action: "copy_takeout_note", device_id, note: text, payload: { note: text } });
+    const copyId = copied?.command?.id;
+    const copyObserved = copyId ? await waitCommand(copyId, Math.min(10, wait_seconds)) : null;
+    if (copyObserved?.command?.status && copyObserved.command.status !== "completed") throw new Error("写入系统剪贴板失败");
     const steps = [
-      { label: "打开双开微信", action: "open_app_profile", app: "微信", package: "com.tencent.mm", index: 2, wait_ms: 5000 },
-      { label: "进入微信聊天页", action: "tap_text", package: "com.tencent.mm", target_text: "微信", match: "exact", wait_ms: 1500 },
-      { label: "打开指定聊天", action: "tap_text", package: "com.tencent.mm", target_text: contact_text, match: "contains", wait_ms: 1500 },
-      { label: "写入微信草稿", action: "input_text", package: "com.tencent.mm", text, append: false, wait_ms: 700 }
+      { label: "打开双开微信", action: "open_app_profile", app: "微信", package: "com.tencent.mm", index: 2, wait_ms: 2600 },
+      { label: "点微信输入框", action: "tap", x: inputPoint.x, y: inputPoint.y, wait_ms: 700 },
+      { label: "长按微信输入框", action: "swipe", x1: inputPoint.x, y1: inputPoint.y, x2: inputPoint.x, y2: inputPoint.y, duration: 720, wait_ms: 650 }
     ];
-    const result = await postCommand({ action: "run_sequence", device_id, steps, payload: { steps, stop_on_error: false }, stop_on_error: false });
-    const id = result?.command?.id;
-    const observed = id ? await waitCommand(id, wait_seconds) : null;
-    return textResult({ queued: result, observed_status: observed?.command || null, contact_text, safety_note: "只写草稿，不发送。" });
-  });
-
-  server.tool("wechat_send_message", "向双开微信中的指定联系人发送一条真实消息。仅操作双开微信；只有在用户明确授权发送时调用。", {
-    contact_text: z.string().min(1).max(80), text: z.string().min(1).max(500),
-    device_id: z.string().default(DEFAULT_DEVICE), wait_seconds: z.number().int().min(5).max(45).default(32)
-  }, async ({ contact_text, text, device_id = DEFAULT_DEVICE, wait_seconds = 32 }) => {
-    const steps = [
-      { label: "打开双开微信", action: "open_app_profile", app: "微信", package: "com.tencent.mm", index: 2, wait_ms: 5000 },
-      { label: "进入微信聊天页", action: "tap_text", package: "com.tencent.mm", target_text: "微信", match: "exact", wait_ms: 1500 },
-      { label: "打开指定聊天", action: "tap_text", package: "com.tencent.mm", target_text: contact_text, match: "contains", wait_ms: 1500 },
-      { label: "写入微信消息", action: "input_text", package: "com.tencent.mm", text, append: false, wait_ms: 600 },
-      { label: "发送微信消息", action: "tap_text", package: "com.tencent.mm", target_text: "发送", match: "exact", wait_ms: 800 }
-    ];
+    if (pastePoint) {
+      steps.push({ label: "按截图坐标点击粘贴", action: "tap", x: pastePoint.x, y: pastePoint.y, wait_ms: 900 });
+    } else {
+      steps.push({ label: "点击系统粘贴菜单", action: "tap_text", target_text: "粘贴", match: "contains", wait_ms: 900 });
+    }
     const result = await postCommand({ action: "run_sequence", device_id, steps, payload: { steps, stop_on_error: true }, stop_on_error: true });
     const id = result?.command?.id;
     const observed = id ? await waitCommand(id, wait_seconds) : null;
-    return textResult({ queued: result, observed_status: observed?.command || null, contact_text, sent_text: text });
+    return textResult({
+      queued: result,
+      clipboard: copied,
+      clipboard_status: copyObserved?.command || null,
+      observed_status: observed?.command || null,
+      contact_text: label,
+      input_point: inputPoint,
+      paste_point: pastePoint || null,
+      safety_note: "视觉草稿模式只粘贴文字，绝不点击发送。完成后请截图确认草稿内容。"
+    });
+  });
+
+  server.tool("wechat_send_message", "向双开微信中的指定联系人发送真实消息。仅在用户明确授权这条消息时调用。视觉模式可在 contact_text 后附 |input=x,y|send=x,y，并复用剪贴板粘贴。", {
+    contact_text: z.string().min(1).max(80), text: z.string().min(1).max(500),
+    device_id: z.string().default(DEFAULT_DEVICE), wait_seconds: z.number().int().min(5).max(45).default(32)
+  }, async ({ contact_text, text, device_id = DEFAULT_DEVICE, wait_seconds = 32 }) => {
+    const inputPoint = wechatCoordHint(contact_text, "input");
+    const pastePoint = wechatCoordHint(contact_text, "paste");
+    const sendPoint = wechatCoordHint(contact_text, "send");
+    const label = wechatContactLabel(contact_text);
+    if (!inputPoint || !sendPoint) {
+      const steps = [
+        { label: "打开双开微信", action: "open_app_profile", app: "微信", package: "com.tencent.mm", index: 2, wait_ms: 3500 },
+        { label: "写入微信消息", action: "input_text", package: "com.tencent.mm", text, append: false, wait_ms: 600 },
+        { label: "发送微信消息", action: "tap_text", package: "com.tencent.mm", target_text: "发送", match: "exact", wait_ms: 800 }
+      ];
+      const result = await postCommand({ action: "run_sequence", device_id, steps, payload: { steps, stop_on_error: true }, stop_on_error: true });
+      const id = result?.command?.id;
+      const observed = id ? await waitCommand(id, wait_seconds) : null;
+      return textResult({ queued: result, observed_status: observed?.command || null, contact_text: label, sent_text: text, mode: "accessibility" });
+    }
+    if (inputPoint.x < 80 || inputPoint.x > 980 || inputPoint.y < 700 || inputPoint.y > 2260) throw new Error("微信视觉输入框坐标超出安全范围");
+    if (sendPoint.x < 650 || sendPoint.x > 1080 || sendPoint.y < 700 || sendPoint.y > 2260) throw new Error("微信视觉发送键坐标超出安全范围");
+    const copied = await postCommand({ action: "copy_takeout_note", device_id, note: text, payload: { note: text } });
+    const copyId = copied?.command?.id;
+    const copyObserved = copyId ? await waitCommand(copyId, Math.min(10, wait_seconds)) : null;
+    const steps = [
+      { label: "打开双开微信", action: "open_app_profile", app: "微信", package: "com.tencent.mm", index: 2, wait_ms: 2600 },
+      { label: "点微信输入框", action: "tap", x: inputPoint.x, y: inputPoint.y, wait_ms: 700 },
+      { label: "长按微信输入框", action: "swipe", x1: inputPoint.x, y1: inputPoint.y, x2: inputPoint.x, y2: inputPoint.y, duration: 720, wait_ms: 650 }
+    ];
+    if (pastePoint) steps.push({ label: "按截图坐标点击粘贴", action: "tap", x: pastePoint.x, y: pastePoint.y, wait_ms: 850 });
+    else steps.push({ label: "点击系统粘贴菜单", action: "tap_text", target_text: "粘贴", match: "contains", wait_ms: 850 });
+    steps.push({ label: "发送微信消息", action: "tap", x: sendPoint.x, y: sendPoint.y, wait_ms: 900 });
+    const result = await postCommand({ action: "run_sequence", device_id, steps, payload: { steps, stop_on_error: true }, stop_on_error: true });
+    const id = result?.command?.id;
+    const observed = id ? await waitCommand(id, wait_seconds) : null;
+    return textResult({
+      queued: result,
+      clipboard_status: copyObserved?.command || null,
+      observed_status: observed?.command || null,
+      contact_text: label,
+      sent_text: text,
+      mode: "visual_clipboard",
+      input_point: inputPoint,
+      paste_point: pastePoint || null,
+      send_point: sendPoint
+    });
   });
 
 
