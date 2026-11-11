@@ -1259,7 +1259,7 @@ function makeServer({ allowedToolNames = null, principal = {} } = {}) {
   server.tool("wechat_visual_nav", "双开微信的视觉导航工具。用于截图识别后的返回、点按会话或上下滚动；不依赖微信无障碍节点。tap 模式硬限制在屏幕上方安全区域，禁止触碰输入框、键盘与发送区域。", {
     mode: z.enum(["back", "tap", "swipe_up", "swipe_down"]),
     x: z.number().min(0).max(1080).optional(),
-    y: z.number().min(90).max(1760).optional(),
+    y: z.number().min(90).max(2390).optional(),
     device_id: z.string().default(DEFAULT_DEVICE),
     wait_seconds: z.number().int().min(3).max(25).default(12)
   }, async ({ mode, x, y, device_id = DEFAULT_DEVICE, wait_seconds = 12 }) => {
@@ -1268,7 +1268,7 @@ function makeServer({ allowedToolNames = null, principal = {} } = {}) {
       steps.push({ label: "微信视觉返回", action: "back", wait_ms: 900 });
     } else if (mode === "tap") {
       if (!Number.isFinite(x) || !Number.isFinite(y)) throw new Error("tap 模式必须提供 x 和 y");
-      if (y > 1760) throw new Error("安全限制：视觉导航不允许点击微信输入区、键盘或发送区域");
+      if (y > 2050 && x > 800) throw new Error("安全限制：视觉导航禁止点击微信右下角发送/加号区域");
       steps.push({ label: "微信视觉点按", action: "tap", x, y, wait_ms: 1100 });
     } else if (mode === "swipe_up") {
       steps.push({ label: "微信视觉向上滚动", action: "swipe", x1: 540, y1: 1500, x2: 540, y2: 520, duration: 450, wait_ms: 1100 });
@@ -1284,7 +1284,7 @@ function makeServer({ allowedToolNames = null, principal = {} } = {}) {
       mode,
       x: x ?? null,
       y: y ?? null,
-      safety_note: "仅视觉导航；tap 被限制在 y<=1760，不触碰微信输入、键盘或发送区。操作后请用 latest_screen/peek_screen 复核画面。"
+      safety_note: "视觉导航按 1080×2400 原始坐标工作；默认禁止点击右下角发送/加号危险区域。操作后请用 latest_screen/peek_screen 复核画面。"
     });
   });
 
@@ -1325,7 +1325,7 @@ function makeServer({ allowedToolNames = null, principal = {} } = {}) {
       { label: "打开双开微信", action: "open_app_profile", app: "微信", package: "com.tencent.mm", index: 2, wait_ms: 2800 }
     ];
     if (visualTap) {
-      if (visualTap.x < 0 || visualTap.x > 1080 || visualTap.y < 120 || visualTap.y > 1850) throw new Error("微信视觉会话坐标超出安全范围");
+      if (visualTap.x < 0 || visualTap.x > 1080 || visualTap.y < 120 || visualTap.y > 2390) throw new Error("微信视觉坐标超出 1080×2400 屏幕安全范围");
       steps.push({ label: "按截图坐标打开会话", action: "tap", x: visualTap.x, y: visualTap.y, wait_ms: 1400 });
     } else {
       steps.push({ label: "按文字打开指定聊天", action: "tap_text", package: "com.tencent.mm", target_text: label, match: "contains", wait_ms: 1600 });
@@ -1368,7 +1368,7 @@ function makeServer({ allowedToolNames = null, principal = {} } = {}) {
       const observed = id ? await waitCommand(id, wait_seconds) : null;
       return textResult({ queued: result, observed_status: observed?.command || null, contact_text: label, safety_note: "只写草稿，不发送。未提供视觉坐标时仍使用旧无障碍输入。" });
     }
-    if (inputPoint.x < 80 || inputPoint.x > 980 || inputPoint.y < 700 || inputPoint.y > 2260) throw new Error("微信视觉输入框坐标超出安全范围");
+    if (inputPoint.x < 80 || inputPoint.x > 980 || inputPoint.y < 700 || inputPoint.y > 2350) throw new Error("微信视觉输入框坐标超出安全范围");
     const copied = await postCommand({ action: "copy_takeout_note", device_id, note: text, payload: { note: text } });
     const copyId = copied?.command?.id;
     const copyObserved = copyId ? await waitCommand(copyId, Math.min(10, wait_seconds)) : null;
@@ -1380,8 +1380,6 @@ function makeServer({ allowedToolNames = null, principal = {} } = {}) {
     ];
     if (pastePoint) {
       steps.push({ label: "按截图坐标点击粘贴", action: "tap", x: pastePoint.x, y: pastePoint.y, wait_ms: 900 });
-    } else {
-      steps.push({ label: "点击系统粘贴菜单", action: "tap_text", target_text: "粘贴", match: "contains", wait_ms: 900 });
     }
     const result = await postCommand({ action: "run_sequence", device_id, steps, payload: { steps, stop_on_error: true }, stop_on_error: true });
     const id = result?.command?.id;
@@ -1394,7 +1392,7 @@ function makeServer({ allowedToolNames = null, principal = {} } = {}) {
       contact_text: label,
       input_point: inputPoint,
       paste_point: pastePoint || null,
-      safety_note: "视觉草稿模式只粘贴文字，绝不点击发送。完成后请截图确认草稿内容。"
+      safety_note: pastePoint ? "视觉草稿模式只粘贴文字，绝不点击发送。完成后请截图确认草稿内容。" : "已只长按输入框，未自动点击任何‘粘贴’文字；请先截图定位系统粘贴菜单，再带 paste=x,y 重试。"
     });
   });
 
@@ -1418,7 +1416,7 @@ function makeServer({ allowedToolNames = null, principal = {} } = {}) {
       return textResult({ queued: result, observed_status: observed?.command || null, contact_text: label, sent_text: text, mode: "accessibility" });
     }
     if (inputPoint.x < 80 || inputPoint.x > 980 || inputPoint.y < 700 || inputPoint.y > 2260) throw new Error("微信视觉输入框坐标超出安全范围");
-    if (sendPoint.x < 650 || sendPoint.x > 1080 || sendPoint.y < 700 || sendPoint.y > 2260) throw new Error("微信视觉发送键坐标超出安全范围");
+    if (sendPoint.x < 650 || sendPoint.x > 1080 || sendPoint.y < 700 || sendPoint.y > 2350) throw new Error("微信视觉发送键坐标超出安全范围");
     const copied = await postCommand({ action: "copy_takeout_note", device_id, note: text, payload: { note: text } });
     const copyId = copied?.command?.id;
     const copyObserved = copyId ? await waitCommand(copyId, Math.min(10, wait_seconds)) : null;
@@ -1427,8 +1425,8 @@ function makeServer({ allowedToolNames = null, principal = {} } = {}) {
       { label: "点微信输入框", action: "tap", x: inputPoint.x, y: inputPoint.y, wait_ms: 700 },
       { label: "长按微信输入框", action: "swipe", x1: inputPoint.x, y1: inputPoint.y, x2: inputPoint.x, y2: inputPoint.y, duration: 720, wait_ms: 650 }
     ];
-    if (pastePoint) steps.push({ label: "按截图坐标点击粘贴", action: "tap", x: pastePoint.x, y: pastePoint.y, wait_ms: 850 });
-    else steps.push({ label: "点击系统粘贴菜单", action: "tap_text", target_text: "粘贴", match: "contains", wait_ms: 850 });
+    if (!pastePoint) throw new Error("视觉发送必须提供 paste=x,y，禁止按文字自动寻找‘粘贴’");
+    steps.push({ label: "按截图坐标点击粘贴", action: "tap", x: pastePoint.x, y: pastePoint.y, wait_ms: 850 });
     steps.push({ label: "发送微信消息", action: "tap", x: sendPoint.x, y: sendPoint.y, wait_ms: 900 });
     const result = await postCommand({ action: "run_sequence", device_id, steps, payload: { steps, stop_on_error: true }, stop_on_error: true });
     const id = result?.command?.id;
