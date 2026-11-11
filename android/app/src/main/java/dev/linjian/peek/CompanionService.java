@@ -529,7 +529,6 @@ public class CompanionService extends Service {
                 JSONObject row = new JSONObject();
                 row.put("profile_index", profileIndex);
                 row.put("user", user.toString());
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) row.put("user_id", user.getIdentifier());
                 row.put("is_current_user", user.equals(current));
                 row.put("activity_count", activities.size());
                 LauncherActivityInfo first = activities.get(0);
@@ -569,7 +568,6 @@ public class CompanionService extends Service {
                 JSONObject row = new JSONObject();
                 row.put("profile_index", seen);
                 row.put("user", user.toString());
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) row.put("user_id", user.getIdentifier());
                 row.put("is_current_user", user.equals(Process.myUserHandle()));
                 row.put("activity_count", activities.size());
                 discovered.put(row);
@@ -582,7 +580,6 @@ public class CompanionService extends Service {
                 out.put("result", "opened_profile:" + wanted);
                 out.put("profile_index", wanted);
                 out.put("user", user.toString());
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) out.put("user_id", user.getIdentifier());
                 out.put("is_current_user", user.equals(Process.myUserHandle()));
                 out.put("component", info.getComponentName().flattenToShortString());
                 out.put("discovered", discovered);
