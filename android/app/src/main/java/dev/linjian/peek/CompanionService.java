@@ -390,13 +390,13 @@ public class CompanionService extends Service {
                 if (ok && ("start_focus_mode".equals(action) || "enable_focus_mode".equals(action))) FocusMode.forceShowLockActivity(focusCtx);
             } else if (isAppGateAction(action)) { JSONObject rr = AppGate.handleCommand(ctx, new JSONObject().put("action", normalizeGateAction(action)).put("app", app).put("package", pkg)); ok = rr.optBoolean("ok", false); result = rr.optString("result", rr.toString());
             } else if ("get_screen_nodes".equals(action)) {
-                if (svc != null) { svc.refreshScreenModel(); ok = true; result = svc.getScreenNodesJsonNow(); }
+                if (svc != null) { svc.refreshScreenModel(); ok = true; result = svc.getScreenNodesJsonNow(pkg); }
                 else result = "accessibility service not ready";
             } else if ("tap_text".equals(action)) {
-                if (svc != null) { JSONObject rr = svc.tapText(targetText, match, index); ok = rr.optBoolean("ok", false); result = rr.toString(); }
+                if (svc != null) { JSONObject rr = svc.tapText(targetText, match, index, pkg); ok = rr.optBoolean("ok", false); result = rr.toString(); }
                 else result = "accessibility service not ready";
             } else if ("input_text".equals(action)) {
-                if (svc != null) { JSONObject rr = svc.inputText(inputText, append); ok = rr.optBoolean("ok", false); result = rr.toString(); }
+                if (svc != null) { JSONObject rr = svc.inputText(inputText, append, pkg); ok = rr.optBoolean("ok", false); result = rr.toString(); }
                 else result = "accessibility service not ready";
             } else if ("peek".equals(action)) {
                 if (svc != null) { svc.doScreenshot(serverUrl, token); ok = true; result = "screenshot requested"; }
