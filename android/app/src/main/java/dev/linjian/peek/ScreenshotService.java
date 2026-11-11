@@ -18,6 +18,7 @@ import android.os.Looper;
 import android.view.Display;
 import android.view.accessibility.AccessibilityEvent;
 import android.view.accessibility.AccessibilityNodeInfo;
+import android.view.accessibility.AccessibilityWindowInfo;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -27,6 +28,8 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
 
@@ -169,22 +172,61 @@ public class ScreenshotService extends AccessibilityService {
         } finally { conn.disconnect(); }
     }
 
-    public void refreshScreenModel() { updateScreenText(); }
+    public void refreshScreenModel() { updateScreenText(""); }
 
-    private void updateScreenText() {
+    private List<AccessibilityNodeInfo> windowRoots(String packageFilter) {
+        List<AccessibilityNodeInfo> roots = new ArrayList<>();
+        String filter = packageFilter == null ? "" : packageFilter.trim();
         try {
-            AccessibilityNodeInfo root = getRootInActiveWindow();
-            StringBuilder sb = new StringBuilder();
-            JSONArray nodes = new JSONArray();
-            collect(root, sb, nodes, 0, 0);
-            screenText = sb.length() > 2400 ? sb.substring(0, 2400) : sb.toString();
-            screenNodesJson = nodes.toString();
-            if (root != null) root.recycle();
+            List<AccessibilityWindowInfo> windows = getWindows();
+            if (windows != null) {
+                for (AccessibilityWindowInfo window : windows) {
+                    if (window == null) continue;
+                    AccessibilityNodeInfo root = window.getRoot();
+                    if (root == null) continue;
+                    String pkg = root.getPackageName() == null ? "" : root.getPackageName().toString();
+                    if (filter.length() == 0 || filter.equals(pkg)) roots.add(root);
+                    else root.recycle();
+                }
+            }
         } catch (Exception ignored) { }
+        if (roots.isEmpty() && filter.length() == 0) {
+            try {
+                AccessibilityNodeInfo root = getRootInActiveWindow();
+                if (root != null) roots.add(root);
+            } catch (Exception ignored) { }
+        }
+        return roots;
     }
 
-    private int collect(AccessibilityNodeInfo node, StringBuilder sb, JSONArray nodes, int depth, int count) {
-        if (node == null || count > 140 || depth > 14) return count;
+    private void recycleRoots(List<AccessibilityNodeInfo> roots) {
+        if (roots == null) return;
+        for (AccessibilityNodeInfo root : roots) {
+            try { if (root != null) root.recycle(); } catch (Exception ignored) { }
+        }
+    }
+
+    private void updateScreenText(String packageFilter) {
+        List<AccessibilityNodeInfo> roots = new ArrayList<>();
+        try {
+            roots = windowRoots(packageFilter);
+            StringBuilder sb = new StringBuilder();
+            JSONArray nodes = new JSONArray();
+            int count = 0;
+            for (AccessibilityNodeInfo root : roots) {
+                String pkg = root.getPackageName() == null ? "" : root.getPackageName().toString();
+                count = collect(root, sb, nodes, 0, count, pkg);
+            }
+            screenText = sb.length() > 2400 ? sb.substring(0, 2400) : sb.toString();
+            screenNodesJson = nodes.toString();
+        } catch (Exception ignored) {
+        } finally {
+            recycleRoots(roots);
+        }
+    }
+
+    private int collect(AccessibilityNodeInfo node, StringBuilder sb, JSONArray nodes, int depth, int count, String packageName) {
+        if (node == null || count > 180 || depth > 14) return count;
         CharSequence text = node.getText();
         CharSequence desc = node.getContentDescription();
         String value = text != null && text.length() > 0 ? text.toString() : (desc != null && desc.length() > 0 ? desc.toString() : "");
@@ -194,6 +236,7 @@ public class ScreenshotService extends AccessibilityService {
                 Rect r = new Rect(); node.getBoundsInScreen(r);
                 JSONObject o = new JSONObject();
                 o.put("index", nodes.length() + 1);
+                o.put("package", packageName == null ? "" : packageName);
                 o.put("text", value.length() > 160 ? value.substring(0, 160) : value);
                 o.put("class", String.valueOf(node.getClassName()));
                 o.put("clickable", node.isClickable());
@@ -206,20 +249,37 @@ public class ScreenshotService extends AccessibilityService {
             } catch (Exception ignored) { }
             count++;
         }
-        for (int i = 0; i < node.getChildCount(); i++) count = collect(node.getChild(i), sb, nodes, depth + 1, count);
+        for (int i = 0; i < node.getChildCount(); i++) count = collect(node.getChild(i), sb, nodes, depth + 1, count, packageName);
         return count;
     }
 
-    public String getScreenNodesJsonNow() { refreshScreenModel(); return screenNodesJson(); }
+    public String getScreenNodesJsonNow() { return getScreenNodesJsonNow(""); }
 
-    public JSONObject tapText(String query, String match, int index) {
+    public String getScreenNodesJsonNow(String packageFilter) {
+        updateScreenText(packageFilter);
+        return screenNodesJson();
+    }
+
+    public JSONObject tapText(String query, String match, int index) { return tapText(query, match, index, ""); }
+
+    public JSONObject tapText(String query, String match, int index, String packageFilter) {
         JSONObject out = new JSONObject();
+        List<AccessibilityNodeInfo> roots = new ArrayList<>();
         try {
             if (query == null || query.trim().isEmpty()) { out.put("ok", false); out.put("result", "target_text_empty"); return out; }
-            AccessibilityNodeInfo root = getRootInActiveWindow();
+            roots = windowRoots(packageFilter);
             TextHit hit = new TextHit(); hit.targetIndex = Math.max(1, index); hit.match = (match == null || match.length() == 0) ? "contains" : match; hit.query = query.trim();
-            findTextNode(root, hit);
-            if (hit.node == null) { out.put("ok", false); out.put("result", "text_not_found:" + query); out.put("nodes", getScreenNodesJsonNow()); if (root != null) root.recycle(); return out; }
+            for (AccessibilityNodeInfo root : roots) {
+                findTextNode(root, hit);
+                if (hit.node != null) break;
+            }
+            if (hit.node == null) {
+                out.put("ok", false);
+                out.put("result", "text_not_found:" + query);
+                out.put("package_filter", packageFilter == null ? "" : packageFilter);
+                out.put("nodes", getScreenNodesJsonNow(packageFilter));
+                return out;
+            }
             Rect r = new Rect(); hit.node.getBoundsInScreen(r);
             AccessibilityNodeInfo clickable = findClickableSelfOrParent(hit.node);
             boolean clicked = false;
@@ -229,11 +289,12 @@ public class ScreenshotService extends AccessibilityService {
             out.put("ok", clicked);
             out.put("result", clicked ? ("tap_text:" + hit.text) : "tap_text_failed");
             out.put("matched_text", hit.text);
+            out.put("package_filter", packageFilter == null ? "" : packageFilter);
             out.put("mode", mode);
             out.put("left", r.left); out.put("top", r.top); out.put("right", r.right); out.put("bottom", r.bottom);
             out.put("center_x", (r.left + r.right) / 2); out.put("center_y", (r.top + r.bottom) / 2);
-            if (root != null) root.recycle();
         } catch (Exception e) { try { out.put("ok", false); out.put("result", shortMsg(e)); } catch (Exception ignored) { } }
+        finally { recycleRoots(roots); }
         return out;
     }
 
@@ -275,13 +336,20 @@ public class ScreenshotService extends AccessibilityService {
         return null;
     }
 
-    public JSONObject inputText(String text, boolean append) {
+    public JSONObject inputText(String text, boolean append) { return inputText(text, append, ""); }
+
+    public JSONObject inputText(String text, boolean append, String packageFilter) {
         JSONObject out = new JSONObject();
+        List<AccessibilityNodeInfo> roots = new ArrayList<>();
         try {
-            AccessibilityNodeInfo root = getRootInActiveWindow();
-            AccessibilityNodeInfo target = root == null ? null : root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT);
-            if (target == null) target = findEditable(root);
-            if (target == null) { out.put("ok", false); out.put("result", "editable_node_not_found"); if (root != null) root.recycle(); return out; }
+            roots = windowRoots(packageFilter);
+            AccessibilityNodeInfo target = null;
+            for (AccessibilityNodeInfo root : roots) {
+                target = root == null ? null : root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT);
+                if (target == null) target = findEditable(root);
+                if (target != null) break;
+            }
+            if (target == null) { out.put("ok", false); out.put("result", "editable_node_not_found"); out.put("package_filter", packageFilter == null ? "" : packageFilter); return out; }
             String value = text == null ? "" : text;
             if (append) {
                 CharSequence existing = target.getText();
