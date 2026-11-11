@@ -50,6 +50,7 @@ public class SenseService extends Service implements SensorEventListener, Locati
     private Float lightLux = null;
     private final java.util.Map<String, Float> lightReadings = new java.util.HashMap<>();
     private int lightSensorCount = 0;
+    private String lightSensorDiagnostics = null;
     private float lastAccelMag = Float.NaN;
     private float movementScore = 0f;
     private Location lastLocation;
@@ -68,9 +69,23 @@ public class SenseService extends Service implements SensorEventListener, Locati
         java.util.List<Sensor> lights = sensorManager.getSensorList(Sensor.TYPE_LIGHT);
         lightSensorCount = lights == null ? 0 : lights.size();
         if (lights != null) {
-            for (Sensor light : lights) {
+            StringBuilder diag = new StringBuilder();
+            for (int i = 0; i < lights.size(); i++) {
+                Sensor light = lights.get(i);
                 sensorManager.registerListener(this, light, SensorManager.SENSOR_DELAY_UI);
+                if (i > 0) diag.append(" || ");
+                diag.append("#").append(i + 1)
+                    .append(" name=").append(light.getName())
+                    .append("; vendor=").append(light.getVendor())
+                    .append("; type=").append(light.getType())
+                    .append("; max=").append(light.getMaximumRange())
+                    .append("; res=").append(light.getResolution())
+                    .append("; power=").append(light.getPower())
+                    .append("; ver=").append(light.getVersion());
             }
+            lightSensorDiagnostics = diag.length() == 0 ? "No TYPE_LIGHT sensors" : diag.toString();
+        } else {
+            lightSensorDiagnostics = "No TYPE_LIGHT sensors";
         }
 
         Sensor accel = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER);
@@ -256,6 +271,7 @@ public class SenseService extends Service implements SensorEventListener, Locati
             addDeviceVitals(payload);
 
             if (lightLux != null) payload.put("lightLux", lightLux);
+            if (lightSensorDiagnostics != null) payload.put("lightSensorDiagnostics", lightSensorDiagnostics);
             payload.put("motionState", motionState());
             movementScore = 0f;
 
