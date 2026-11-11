@@ -49,6 +49,8 @@ public class SenseService extends Service implements SensorEventListener, Locati
 
     private Float lightLux = null;
     private final java.util.Map<String, Float> lightReadings = new java.util.HashMap<>();
+    private final java.util.Map<String, Integer> lightCallbackCounts = new java.util.HashMap<>();
+    private final java.util.Map<String, Long> lightLastEventMs = new java.util.HashMap<>();
     private int lightSensorCount = 0;
     private String lightSensorDiagnostics = null;
     private float lastAccelMag = Float.NaN;
@@ -161,8 +163,10 @@ public class SenseService extends Service implements SensorEventListener, Locati
         if (event.sensor.getType() == Sensor.TYPE_LIGHT && event.values.length > 0) {
             float value = event.values[0];
             if (!Float.isNaN(value) && !Float.isInfinite(value) && value >= 0f) {
-                String key = event.sensor.getName() + "|" + event.sensor.getVendor();
+                String key = event.sensor.getName() + "|" + event.sensor.getVendor() + "|" + (event.sensor.isWakeUpSensor() ? "wakeup" : "nonwakeup");
                 lightReadings.put(key, value);
+                lightCallbackCounts.put(key, (lightCallbackCounts.containsKey(key) ? lightCallbackCounts.get(key) : 0) + 1);
+                lightLastEventMs.put(key, System.currentTimeMillis());
                 float best = 0f;
                 boolean have = false;
                 for (Float v : lightReadings.values()) {
@@ -272,6 +276,21 @@ public class SenseService extends Service implements SensorEventListener, Locati
 
             if (lightLux != null) payload.put("lightLux", lightLux);
             if (lightSensorDiagnostics != null) payload.put("lightSensorDiagnostics", lightSensorDiagnostics);
+            if (!lightReadings.isEmpty() || !lightCallbackCounts.isEmpty()) {
+                org.json.JSONArray events = new org.json.JSONArray();
+                java.util.Set<String> keys = new java.util.HashSet<>();
+                keys.addAll(lightReadings.keySet());
+                keys.addAll(lightCallbackCounts.keySet());
+                for (String key : keys) {
+                    JSONObject item = new JSONObject();
+                    item.put("sensor", key);
+                    if (lightReadings.containsKey(key)) item.put("lastLux", lightReadings.get(key));
+                    item.put("callbackCount", lightCallbackCounts.containsKey(key) ? lightCallbackCounts.get(key) : 0);
+                    if (lightLastEventMs.containsKey(key)) item.put("lastEventEpochMs", lightLastEventMs.get(key));
+                    events.put(item);
+                }
+                payload.put("lightSensorEvents", events.toString());
+            }
             payload.put("motionState", motionState());
             movementScore = 0f;
 
