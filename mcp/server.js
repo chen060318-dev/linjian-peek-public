@@ -1161,7 +1161,6 @@ const COMPANION_ALLOWED_TOOLS = new Set([
   "end_screen_break", "extend_screen_break", "deny_screen_break_release_request",
   "list_screen_break_apps", "list_lockable_apps",
   "douyin_open_messages", "douyin_open_chat", "douyin_check_streak", "douyin_draft_message", "douyin_send_message",
-    "wechat_probe_clone", "wechat_open_chats", "wechat_open_chat", "wechat_read_chat", "wechat_draft_message", "wechat_send_message",
   "wechat_probe_clone", "wechat_open_chats", "wechat_open_chat", "wechat_read_chat", "wechat_draft_message", "wechat_send_message"
 ]);
 const DOUYIN_ALLOWED_TOOLS = new Set([
@@ -1243,6 +1242,96 @@ function makeServer({ allowedToolNames = null, principal = {} } = {}) {
       return { content: [{ type: "text", text: JSON.stringify(profile) }], structuredContent: profile };
     });
   }
+
+  // WeChat tools are intentionally registered early because some clients only ingest the first tool schemas.
+  server.tool("wechat_probe_clone", "只打开双开微信并读取当前页面无障碍节点，用于确认双开实例与页面结构；不会点击联系人或发送消息。", {
+    device_id: z.string().default(DEFAULT_DEVICE), wait_seconds: z.number().int().min(5).max(35).default(22)
+  }, async ({ device_id = DEFAULT_DEVICE, wait_seconds = 22 }) => {
+    const steps = [
+      { label: "打开双开微信", action: "open_app_profile", app: "微信", package: "com.tencent.mm", index: 2, wait_ms: 5000 },
+      { label: "读取微信页面", action: "get_screen_nodes", package: "com.tencent.mm", wait_ms: 500 }
+    ];
+    const result = await postCommand({ action: "run_sequence", device_id, steps, payload: { steps, stop_on_error: false }, stop_on_error: false });
+    const id = result?.command?.id;
+    const observed = id ? await waitCommand(id, wait_seconds) : null;
+    return textResult({ queued: result, observed_status: observed?.command || null, note: "仅打开双开微信并读取页面，不会发送消息。" });
+  });
+
+  server.tool("wechat_open_chats", "打开双开微信并进入微信聊天列表。仅操作双开实例，不操作主微信。", {
+    device_id: z.string().default(DEFAULT_DEVICE), wait_seconds: z.number().int().min(5).max(35).default(22)
+  }, async ({ device_id = DEFAULT_DEVICE, wait_seconds = 22 }) => {
+    const steps = [
+      { label: "打开双开微信", action: "open_app_profile", app: "微信", package: "com.tencent.mm", index: 2, wait_ms: 5000 },
+      { label: "进入微信聊天页", action: "tap_text", package: "com.tencent.mm", target_text: "微信", match: "exact", wait_ms: 1600 }
+    ];
+    const result = await postCommand({ action: "run_sequence", device_id, steps, payload: { steps, stop_on_error: false }, stop_on_error: false });
+    const id = result?.command?.id;
+    const observed = id ? await waitCommand(id, wait_seconds) : null;
+    return textResult({ queued: result, observed_status: observed?.command || null });
+  });
+
+  server.tool("wechat_open_chat", "打开双开微信聊天列表并进入指定联系人会话。contact_text 必须是双开微信聊天列表中可见的昵称或备注。", {
+    contact_text: z.string().min(1).max(80), device_id: z.string().default(DEFAULT_DEVICE), wait_seconds: z.number().int().min(5).max(40).default(26)
+  }, async ({ contact_text, device_id = DEFAULT_DEVICE, wait_seconds = 26 }) => {
+    const steps = [
+      { label: "打开双开微信", action: "open_app_profile", app: "微信", package: "com.tencent.mm", index: 2, wait_ms: 5000 },
+      { label: "进入微信聊天页", action: "tap_text", package: "com.tencent.mm", target_text: "微信", match: "exact", wait_ms: 1500 },
+      { label: "打开指定聊天", action: "tap_text", package: "com.tencent.mm", target_text: contact_text, match: "contains", wait_ms: 1600 }
+    ];
+    const result = await postCommand({ action: "run_sequence", device_id, steps, payload: { steps, stop_on_error: false }, stop_on_error: false });
+    const id = result?.command?.id;
+    const observed = id ? await waitCommand(id, wait_seconds) : null;
+    return textResult({ queued: result, observed_status: observed?.command || null, contact_text });
+  });
+
+  server.tool("wechat_read_chat", "进入指定双开微信会话并读取当前页面无障碍节点；只读，不发送消息。", {
+    contact_text: z.string().min(1).max(80), device_id: z.string().default(DEFAULT_DEVICE), wait_seconds: z.number().int().min(5).max(40).default(28)
+  }, async ({ contact_text, device_id = DEFAULT_DEVICE, wait_seconds = 28 }) => {
+    const steps = [
+      { label: "打开双开微信", action: "open_app_profile", app: "微信", package: "com.tencent.mm", index: 2, wait_ms: 5000 },
+      { label: "进入微信聊天页", action: "tap_text", package: "com.tencent.mm", target_text: "微信", match: "exact", wait_ms: 1500 },
+      { label: "打开指定聊天", action: "tap_text", package: "com.tencent.mm", target_text: contact_text, match: "contains", wait_ms: 1500 },
+      { label: "读取聊天页", action: "get_screen_nodes", package: "com.tencent.mm", wait_ms: 500 }
+    ];
+    const result = await postCommand({ action: "run_sequence", device_id, steps, payload: { steps, stop_on_error: false }, stop_on_error: false });
+    const id = result?.command?.id;
+    const observed = id ? await waitCommand(id, wait_seconds) : null;
+    return textResult({ queued: result, observed_status: observed?.command || null, contact_text, note: "只读取当前微信会话页面，不发送消息。" });
+  });
+
+  server.tool("wechat_draft_message", "进入指定双开微信会话并把文字写入输入框，但绝不点击发送。", {
+    contact_text: z.string().min(1).max(80), text: z.string().min(1).max(500),
+    device_id: z.string().default(DEFAULT_DEVICE), wait_seconds: z.number().int().min(5).max(40).default(28)
+  }, async ({ contact_text, text, device_id = DEFAULT_DEVICE, wait_seconds = 28 }) => {
+    const steps = [
+      { label: "打开双开微信", action: "open_app_profile", app: "微信", package: "com.tencent.mm", index: 2, wait_ms: 5000 },
+      { label: "进入微信聊天页", action: "tap_text", package: "com.tencent.mm", target_text: "微信", match: "exact", wait_ms: 1500 },
+      { label: "打开指定聊天", action: "tap_text", package: "com.tencent.mm", target_text: contact_text, match: "contains", wait_ms: 1500 },
+      { label: "写入微信草稿", action: "input_text", package: "com.tencent.mm", text, append: false, wait_ms: 700 }
+    ];
+    const result = await postCommand({ action: "run_sequence", device_id, steps, payload: { steps, stop_on_error: false }, stop_on_error: false });
+    const id = result?.command?.id;
+    const observed = id ? await waitCommand(id, wait_seconds) : null;
+    return textResult({ queued: result, observed_status: observed?.command || null, contact_text, safety_note: "只写草稿，不发送。" });
+  });
+
+  server.tool("wechat_send_message", "向双开微信中的指定联系人发送一条真实消息。仅操作双开微信；只有在用户明确授权发送时调用。", {
+    contact_text: z.string().min(1).max(80), text: z.string().min(1).max(500),
+    device_id: z.string().default(DEFAULT_DEVICE), wait_seconds: z.number().int().min(5).max(45).default(32)
+  }, async ({ contact_text, text, device_id = DEFAULT_DEVICE, wait_seconds = 32 }) => {
+    const steps = [
+      { label: "打开双开微信", action: "open_app_profile", app: "微信", package: "com.tencent.mm", index: 2, wait_ms: 5000 },
+      { label: "进入微信聊天页", action: "tap_text", package: "com.tencent.mm", target_text: "微信", match: "exact", wait_ms: 1500 },
+      { label: "打开指定聊天", action: "tap_text", package: "com.tencent.mm", target_text: contact_text, match: "contains", wait_ms: 1500 },
+      { label: "写入微信消息", action: "input_text", package: "com.tencent.mm", text, append: false, wait_ms: 600 },
+      { label: "发送微信消息", action: "tap_text", package: "com.tencent.mm", target_text: "发送", match: "exact", wait_ms: 800 }
+    ];
+    const result = await postCommand({ action: "run_sequence", device_id, steps, payload: { steps, stop_on_error: true }, stop_on_error: true });
+    const id = result?.command?.id;
+    const observed = id ? await waitCommand(id, wait_seconds) : null;
+    return textResult({ queued: result, observed_status: observed?.command || null, contact_text, sent_text: text });
+  });
+
 
   // v0.3.8.2：专注模式工具靠前注册，避免部分客户端只读取前若干个 schema 时漏掉接口。
   server.tool("get_focus_status", "读取手机端专注模式 Focus Mode 状态：是否开启、目标、剩余时间、留言、应急次数。用户问专注模式、锁手机、全机专注、留言给他时优先调用。", {
@@ -1554,94 +1643,6 @@ function makeServer({ allowedToolNames = null, principal = {} } = {}) {
     return textResult({ queued: result, observed_status: observed?.command || null, contact_text, sent_text: text });
   });
 
-
-  server.tool("wechat_probe_clone", "只打开双开微信并读取当前页面无障碍节点，用于确认双开实例与页面结构；不会点击联系人或发送消息。", {
-    device_id: z.string().default(DEFAULT_DEVICE), wait_seconds: z.number().int().min(5).max(35).default(22)
-  }, async ({ device_id = DEFAULT_DEVICE, wait_seconds = 22 }) => {
-    const steps = [
-      { label: "打开双开微信", action: "open_app_profile", app: "微信", package: "com.tencent.mm", index: 2, wait_ms: 5000 },
-      { label: "读取微信页面", action: "get_screen_nodes", package: "com.tencent.mm", wait_ms: 500 }
-    ];
-    const result = await postCommand({ action: "run_sequence", device_id, steps, payload: { steps, stop_on_error: false }, stop_on_error: false });
-    const id = result?.command?.id;
-    const observed = id ? await waitCommand(id, wait_seconds) : null;
-    return textResult({ queued: result, observed_status: observed?.command || null, note: "仅打开双开微信并读取页面，不会发送消息。" });
-  });
-
-  server.tool("wechat_open_chats", "打开双开微信并进入微信聊天列表。仅操作双开实例，不操作主微信。", {
-    device_id: z.string().default(DEFAULT_DEVICE), wait_seconds: z.number().int().min(5).max(35).default(22)
-  }, async ({ device_id = DEFAULT_DEVICE, wait_seconds = 22 }) => {
-    const steps = [
-      { label: "打开双开微信", action: "open_app_profile", app: "微信", package: "com.tencent.mm", index: 2, wait_ms: 5000 },
-      { label: "进入微信聊天页", action: "tap_text", package: "com.tencent.mm", target_text: "微信", match: "exact", wait_ms: 1600 }
-    ];
-    const result = await postCommand({ action: "run_sequence", device_id, steps, payload: { steps, stop_on_error: false }, stop_on_error: false });
-    const id = result?.command?.id;
-    const observed = id ? await waitCommand(id, wait_seconds) : null;
-    return textResult({ queued: result, observed_status: observed?.command || null });
-  });
-
-  server.tool("wechat_open_chat", "打开双开微信聊天列表并进入指定联系人会话。contact_text 必须是双开微信聊天列表中可见的昵称或备注。", {
-    contact_text: z.string().min(1).max(80), device_id: z.string().default(DEFAULT_DEVICE), wait_seconds: z.number().int().min(5).max(40).default(26)
-  }, async ({ contact_text, device_id = DEFAULT_DEVICE, wait_seconds = 26 }) => {
-    const steps = [
-      { label: "打开双开微信", action: "open_app_profile", app: "微信", package: "com.tencent.mm", index: 2, wait_ms: 5000 },
-      { label: "进入微信聊天页", action: "tap_text", package: "com.tencent.mm", target_text: "微信", match: "exact", wait_ms: 1500 },
-      { label: "打开指定聊天", action: "tap_text", package: "com.tencent.mm", target_text: contact_text, match: "contains", wait_ms: 1600 }
-    ];
-    const result = await postCommand({ action: "run_sequence", device_id, steps, payload: { steps, stop_on_error: false }, stop_on_error: false });
-    const id = result?.command?.id;
-    const observed = id ? await waitCommand(id, wait_seconds) : null;
-    return textResult({ queued: result, observed_status: observed?.command || null, contact_text });
-  });
-
-  server.tool("wechat_read_chat", "进入指定双开微信会话并读取当前页面无障碍节点；只读，不发送消息。", {
-    contact_text: z.string().min(1).max(80), device_id: z.string().default(DEFAULT_DEVICE), wait_seconds: z.number().int().min(5).max(40).default(28)
-  }, async ({ contact_text, device_id = DEFAULT_DEVICE, wait_seconds = 28 }) => {
-    const steps = [
-      { label: "打开双开微信", action: "open_app_profile", app: "微信", package: "com.tencent.mm", index: 2, wait_ms: 5000 },
-      { label: "进入微信聊天页", action: "tap_text", package: "com.tencent.mm", target_text: "微信", match: "exact", wait_ms: 1500 },
-      { label: "打开指定聊天", action: "tap_text", package: "com.tencent.mm", target_text: contact_text, match: "contains", wait_ms: 1500 },
-      { label: "读取聊天页", action: "get_screen_nodes", package: "com.tencent.mm", wait_ms: 500 }
-    ];
-    const result = await postCommand({ action: "run_sequence", device_id, steps, payload: { steps, stop_on_error: false }, stop_on_error: false });
-    const id = result?.command?.id;
-    const observed = id ? await waitCommand(id, wait_seconds) : null;
-    return textResult({ queued: result, observed_status: observed?.command || null, contact_text, note: "只读取当前微信会话页面，不发送消息。" });
-  });
-
-  server.tool("wechat_draft_message", "进入指定双开微信会话并把文字写入输入框，但绝不点击发送。", {
-    contact_text: z.string().min(1).max(80), text: z.string().min(1).max(500),
-    device_id: z.string().default(DEFAULT_DEVICE), wait_seconds: z.number().int().min(5).max(40).default(28)
-  }, async ({ contact_text, text, device_id = DEFAULT_DEVICE, wait_seconds = 28 }) => {
-    const steps = [
-      { label: "打开双开微信", action: "open_app_profile", app: "微信", package: "com.tencent.mm", index: 2, wait_ms: 5000 },
-      { label: "进入微信聊天页", action: "tap_text", package: "com.tencent.mm", target_text: "微信", match: "exact", wait_ms: 1500 },
-      { label: "打开指定聊天", action: "tap_text", package: "com.tencent.mm", target_text: contact_text, match: "contains", wait_ms: 1500 },
-      { label: "写入微信草稿", action: "input_text", package: "com.tencent.mm", text, append: false, wait_ms: 700 }
-    ];
-    const result = await postCommand({ action: "run_sequence", device_id, steps, payload: { steps, stop_on_error: false }, stop_on_error: false });
-    const id = result?.command?.id;
-    const observed = id ? await waitCommand(id, wait_seconds) : null;
-    return textResult({ queued: result, observed_status: observed?.command || null, contact_text, safety_note: "只写草稿，不发送。" });
-  });
-
-  server.tool("wechat_send_message", "向双开微信中的指定联系人发送一条真实消息。仅操作双开微信；只有在用户明确授权发送时调用。", {
-    contact_text: z.string().min(1).max(80), text: z.string().min(1).max(500),
-    device_id: z.string().default(DEFAULT_DEVICE), wait_seconds: z.number().int().min(5).max(45).default(32)
-  }, async ({ contact_text, text, device_id = DEFAULT_DEVICE, wait_seconds = 32 }) => {
-    const steps = [
-      { label: "打开双开微信", action: "open_app_profile", app: "微信", package: "com.tencent.mm", index: 2, wait_ms: 5000 },
-      { label: "进入微信聊天页", action: "tap_text", package: "com.tencent.mm", target_text: "微信", match: "exact", wait_ms: 1500 },
-      { label: "打开指定聊天", action: "tap_text", package: "com.tencent.mm", target_text: contact_text, match: "contains", wait_ms: 1500 },
-      { label: "写入微信消息", action: "input_text", package: "com.tencent.mm", text, append: false, wait_ms: 600 },
-      { label: "发送微信消息", action: "tap_text", package: "com.tencent.mm", target_text: "发送", match: "exact", wait_ms: 800 }
-    ];
-    const result = await postCommand({ action: "run_sequence", device_id, steps, payload: { steps, stop_on_error: true }, stop_on_error: true });
-    const id = result?.command?.id;
-    const observed = id ? await waitCommand(id, wait_seconds) : null;
-    return textResult({ queued: result, observed_status: observed?.command || null, contact_text, sent_text: text });
-  });
 
   server.tool("draft_xhs_comment", "在当前小红书帖子里尝试打开评论输入框并填入评论草稿，但不点击发送。当用户说“帮我写评论/先填进去/评论草稿”或类似表达时主动调用。", {
     text: z.string(), device_id: z.string().default(DEFAULT_DEVICE), wait_seconds: z.number().int().min(5).max(30).default(18)
