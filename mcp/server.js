@@ -1161,7 +1161,7 @@ const COMPANION_ALLOWED_TOOLS = new Set([
   "end_screen_break", "extend_screen_break", "deny_screen_break_release_request",
   "list_screen_break_apps", "list_lockable_apps",
   "douyin_open_messages", "douyin_open_chat", "douyin_check_streak", "douyin_draft_message", "douyin_send_message",
-  "wechat_probe_clone", "wechat_open_chats", "wechat_open_chat", "wechat_read_chat", "wechat_draft_message", "wechat_send_message",
+  "wechat_probe_clone", "wechat_open_chats", "wechat_open_chat", "wechat_read_chat", "wechat_draft_message", "wechat_send_message", "wechat_quick_send_current",
   "wechat_visual_nav"
 ]);
 const DOUYIN_ALLOWED_TOOLS = new Set([
@@ -1177,7 +1177,7 @@ const WECHAT_ALLOWED_TOOLS = new Set([
   "wechat_open_chat",
   "wechat_read_chat",
   "wechat_draft_message",
-  "wechat_send_message",
+  "wechat_send_message", "wechat_quick_send_current",
   "wechat_visual_nav"
 ]);
 
@@ -1187,7 +1187,7 @@ function makeServer({ allowedToolNames = null, principal = {} } = {}) {
   const commandBackedTools = new Set([
     "peek_screen", "get_screen_nodes", "tap_text", "input_text", "draft_xhs_comment", "xhs_comment", "send_visible_comment_after_confirmation",
     "douyin_open_messages", "douyin_open_chat", "douyin_check_streak", "douyin_draft_message", "douyin_send_message",
-    "wechat_visual_nav",
+    "wechat_visual_nav", "wechat_quick_send_current",
     "add_guardian_calendar_event", "care_action", "trigger_guidian", "mark_guidian_returned",
     "set_guidian_config", "send_weather_notification", "send_phone_command", "open_app", "phone_home", "phone_back", "phone_recents",
     "phone_screen_off", "send_notification", "set_alarm", "run_sequence", "run_preset", "save_known_app", "screen_break_app",
@@ -1494,6 +1494,39 @@ function makeServer({ allowedToolNames = null, principal = {} } = {}) {
       contact_text: label,
       mode: "accessibility",
       safety_note: "只写草稿，不点击发送。"
+    });
+  });
+
+  server.tool("wechat_quick_send_current", "在当前已经打开的双开微信聊天页快速发送一条消息。不会重开微信，不切联系人；一条序列完成输入框激活、百度剪贴板内容卡片粘贴和发送。仅在用户明确授权当前会话发送时调用。", {
+    text: z.string().min(1).max(500),
+    focus_x: z.number().int().min(80).max(980).default(500),
+    focus_y: z.number().int().min(700).max(2350).default(2190),
+    clip_x: z.number().int().min(0).max(1080).default(260),
+    clip_y: z.number().int().min(700).max(2000).default(1285),
+    send_x: z.number().int().min(650).max(1080).default(990),
+    send_y: z.number().int().min(900).max(1800).default(1475),
+    device_id: z.string().default(DEFAULT_DEVICE),
+    wait_seconds: z.number().int().min(5).max(35).default(22)
+  }, async ({ text, focus_x = 500, focus_y = 2190, clip_x = 260, clip_y = 1285, send_x = 990, send_y = 1475, device_id = DEFAULT_DEVICE, wait_seconds = 22 }) => {
+    const copied = await postCommand({ action: "copy_takeout_note", device_id, note: text, payload: { note: text } });
+    const copyId = copied?.command?.id;
+    const copyObserved = copyId ? await waitCommand(copyId, Math.min(10, wait_seconds)) : null;
+    if (copyObserved?.command?.status && copyObserved.command.status !== "completed") throw new Error("写入系统剪贴板失败");
+
+    const steps = [
+      { label: "激活当前微信输入框", action: "tap", x: focus_x, y: focus_y, wait_ms: 800 },
+      { label: "点击百度剪贴板内容卡片", action: "tap", x: clip_x, y: clip_y, wait_ms: 850 },
+      { label: "发送当前微信消息", action: "tap", x: send_x, y: send_y, wait_ms: 850 }
+    ];
+    const result = await postCommand({ action: "run_sequence", device_id, steps, payload: { steps, stop_on_error: true }, stop_on_error: true });
+    const id = result?.command?.id;
+    const observed = id ? await waitCommand(id, wait_seconds) : null;
+    return textResult({
+      queued: result,
+      clipboard_status: copyObserved?.command || null,
+      observed_status: observed?.command || null,
+      sent_text: text,
+      mode: "quick_current_chat"
     });
   });
 
