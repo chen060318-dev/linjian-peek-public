@@ -1162,7 +1162,7 @@ const COMPANION_ALLOWED_TOOLS = new Set([
   "list_screen_break_apps", "list_lockable_apps",
   "douyin_open_messages", "douyin_open_chat", "douyin_check_streak", "douyin_draft_message", "douyin_send_message",
   "wechat_probe_clone", "wechat_open_chats", "wechat_open_chat", "wechat_read_chat", "wechat_draft_message", "wechat_send_message", "wechat_quick_send_current",
-  "wechat_scroll_current_chat", "wechat_tap_current_screen", "wechat_open_sticker_category", "wechat_send_sticker_current", "wechat_visual_nav"
+  "wechat_scroll_current_chat", "wechat_tap_current_screen", "wechat_open_sticker_category", "wechat_scroll_sticker_categories", "wechat_send_sticker_current", "wechat_visual_nav"
 ]);
 const DOUYIN_ALLOWED_TOOLS = new Set([
   "douyin_open_messages",
@@ -1178,7 +1178,7 @@ const WECHAT_ALLOWED_TOOLS = new Set([
   "wechat_read_chat",
   "wechat_draft_message",
   "wechat_send_message", "wechat_quick_send_current",
-  "wechat_scroll_current_chat", "wechat_tap_current_screen", "wechat_open_sticker_category", "wechat_send_sticker_current", "wechat_visual_nav"
+  "wechat_scroll_current_chat", "wechat_tap_current_screen", "wechat_open_sticker_category", "wechat_scroll_sticker_categories", "wechat_send_sticker_current", "wechat_visual_nav"
 ]);
 
 
@@ -1187,7 +1187,7 @@ function makeServer({ allowedToolNames = null, principal = {} } = {}) {
   const commandBackedTools = new Set([
     "peek_screen", "get_screen_nodes", "tap_text", "input_text", "draft_xhs_comment", "xhs_comment", "send_visible_comment_after_confirmation",
     "douyin_open_messages", "douyin_open_chat", "douyin_check_streak", "douyin_draft_message", "douyin_send_message",
-    "wechat_visual_nav", "wechat_quick_send_current", "wechat_scroll_current_chat", "wechat_tap_current_screen", "wechat_open_sticker_category", "wechat_send_sticker_current",
+    "wechat_visual_nav", "wechat_quick_send_current", "wechat_scroll_current_chat", "wechat_tap_current_screen", "wechat_open_sticker_category", "wechat_scroll_sticker_categories", "wechat_send_sticker_current",
     "add_guardian_calendar_event", "care_action", "trigger_guidian", "mark_guidian_returned",
     "set_guidian_config", "send_weather_notification", "send_phone_command", "open_app", "phone_home", "phone_back", "phone_recents",
     "phone_screen_off", "send_notification", "set_alarm", "run_sequence", "run_preset", "save_known_app", "screen_break_app",
@@ -1418,6 +1418,48 @@ function makeServer({ allowedToolNames = null, principal = {} } = {}) {
     const id = result?.command?.id;
     const observed = id ? await waitCommand(id, wait_seconds) : null;
     return textResult({ queued: result, observed_status: observed?.command || null, category_point: { x: tab_x, y: tab_y }, open_panel });
+  });
+
+  server.tool("wechat_scroll_sticker_categories", "横向滚动当前双开微信表情面板顶部的分类栏。用于发现当前屏幕右侧/左侧没有露出的更多表情包分类。direction=right 表示继续查看右边更多分类（手指向左滑）；direction=left 表示返回查看左边分类（手指向右滑）。只滑分类栏，不点表情、不发送消息。调用前应先确保表情面板已打开。", {
+    direction: z.enum(["right","left"]).default("right"),
+    repeat: z.number().int().min(1).max(5).default(1),
+    row_y: z.number().int().min(900).max(1900).default(1425),
+    device_id: z.string().default(DEFAULT_DEVICE),
+    wait_seconds: z.number().int().min(5).max(30).default(16)
+  }, async ({ direction = "right", repeat = 1, row_y = 1425, device_id = DEFAULT_DEVICE, wait_seconds = 16 }) => {
+    const leftX = 180;
+    const rightX = 900;
+    const x1 = direction === "right" ? rightX : leftX;
+    const x2 = direction === "right" ? leftX : rightX;
+    const steps = [
+      { label: "拉起双开微信当前表情面板", action: "open_app_profile", app: "微信", package: "com.tencent.mm", index: 2, wait_ms: 1200 }
+    ];
+    for (let n = 0; n < repeat; n++) {
+      steps.push({
+        label: `横向滚动微信表情分类 ${n + 1}/${repeat}`,
+        action: "swipe",
+        x1,
+        y1: row_y,
+        x2,
+        y2: row_y,
+        duration: 520,
+        wait_ms: 700
+      });
+    }
+    const result = await postCommand({ action: "run_sequence", device_id, steps, payload: { steps, stop_on_error: true }, stop_on_error: true });
+    const id = result?.command?.id;
+    const observed = id ? await waitCommand(id, wait_seconds) : null;
+    return textResult({
+      queued: result,
+      observed_status: observed?.command || null,
+      direction,
+      repeat,
+      row_y,
+      gesture: { x1, y1: row_y, x2, y2: row_y },
+      note: direction === "right"
+        ? "已向右侧更多表情分类滚动；请用 peek_screen 查看新露出的分类。"
+        : "已向左侧已有表情分类滚动；请用 peek_screen 查看新露出的分类。"
+    });
   });
 
   server.tool("wechat_send_sticker_current", "发送当前双开微信聊天页里已经可见的一张微信表情/自定义表情。微信表情通常点一下就会直接发送；调用前必须确认用户已授权当前会话发送，并先用 peek_screen 确认该表情坐标。收藏表情和任意分类表情包都适用。", {
