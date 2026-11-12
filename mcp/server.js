@@ -2117,6 +2117,8 @@ function makeServer({ allowedToolNames = null, principal = {} } = {}) {
     let chooserObserved = null;
     if (auto_choose_douyin && shareObserved?.command?.status === "completed") {
       const steps = [
+        { label: "展开系统分享应用列表", action: "swipe", x1: 540, y1: 2200, x2: 540, y2: 1450, duration: 420, wait_ms: 650 },
+        { label: "继续展开系统分享应用列表", action: "swipe", x1: 540, y1: 2200, x2: 540, y2: 1450, duration: 420, wait_ms: 650 },
         { label: "在系统分享面板选择双开抖音", action: "tap_text", target_text: "抖音", match: "exact", index: clone_target_index, wait_ms: 1800 }
       ];
       chooserQueued = await postCommand({ action: "run_sequence", device_id, steps, payload: { steps, stop_on_error: false }, stop_on_error: false });
