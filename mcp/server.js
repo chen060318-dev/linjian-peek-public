@@ -1681,7 +1681,7 @@ function makeServer({ allowedToolNames = null, principal = {} } = {}) {
     });
   });
 
-  server.tool("wechat_send_message", "向双开微信发送真实消息。仅在用户明确授权发送这条具体消息时调用。若当前目标聊天已经打开，优先直接传 contact_text=\"CURRENT\"：工具会自动使用本机固定输入框/剪贴板/发送键位置完成发送，不需要模型自己寻找消息框。只有需要切联系人或视觉兜底时才使用 |focus=x,y|clip=x,y|send=x,y。", {
+  server.tool("wechat_send_message", "向双开微信发送真实消息。仅在用户明确授权发送这条具体消息时调用。若当前目标聊天已经打开，优先传 contact_text=\"CURRENT\"：极速模式会一次性拉起双开微信、聚焦当前消息框、直接写入文字并发送，不走剪贴板、不要求模型找消息框、默认无需额外截图复核。若极速模式不兼容，可传 CURRENT_CLIPBOARD 使用较稳但更慢的剪贴板模式；只有需要切联系人或视觉兜底时才使用 |focus=x,y|clip=x,y|send=x,y。", {
     contact_text: z.string().min(1).max(80), text: z.string().min(1).max(500),
     device_id: z.string().default(DEFAULT_DEVICE), wait_seconds: z.number().int().min(5).max(45).default(32)
   }, async ({ contact_text, text, device_id = DEFAULT_DEVICE, wait_seconds = 32 }) => {
@@ -1694,32 +1694,53 @@ function makeServer({ allowedToolNames = null, principal = {} } = {}) {
 
     if (currentShortcut) {
       const defaultFocus = { x: 500, y: 2190 };
+      const defaultSend = { x: 990, y: 1475 };
+      const steps = [
+        { label: "极速拉起双开微信当前聊天页", action: "open_app_profile", app: "微信", package: "com.tencent.mm", index: 2, wait_ms: 500 },
+        { label: "极速聚焦当前微信消息框", action: "tap", x: defaultFocus.x, y: defaultFocus.y, wait_ms: 220 },
+        { label: "直接写入当前微信消息", action: "input_text", package: "com.tencent.mm", text, append: false, wait_ms: 260 },
+        { label: "极速发送当前微信消息", action: "tap", x: defaultSend.x, y: defaultSend.y, wait_ms: 280 }
+      ];
+      const result = await postCommand({ action: "run_sequence", device_id, steps, payload: { steps, stop_on_error: true }, stop_on_error: true });
+      const id = result?.command?.id;
+      const observed = id ? await waitCommand(id, Math.min(wait_seconds, 10)) : null;
+      return textResult({
+        queued: result,
+        observed_status: observed?.command || null,
+        contact_text: "CURRENT",
+        sent_text: text,
+        mode: "current_chat_fast_direct_input",
+        auto_points: { focus: defaultFocus, send: defaultSend },
+        note: "CURRENT 极速模式：单次组合命令完成拉起、聚焦、直接写字、发送；默认无需额外截图复核。若未成功再改用 CURRENT_CLIPBOARD。"
+      });
+    }
+
+    if (/^CURRENT_CLIPBOARD$/i.test(String(label || "").trim())) {
+      const defaultFocus = { x: 500, y: 2190 };
       const defaultClip = { x: 260, y: 1285 };
       const defaultSend = { x: 990, y: 1475 };
 
       const copied = await postCommand({ action: "copy_takeout_note", device_id, note: text, payload: { note: text } });
       const copyId = copied?.command?.id;
-      const copyObserved = copyId ? await waitCommand(copyId, Math.min(10, wait_seconds)) : null;
+      const copyObserved = copyId ? await waitCommand(copyId, Math.min(8, wait_seconds)) : null;
       if (copyObserved?.command?.status && copyObserved.command.status !== "completed") throw new Error("写入系统剪贴板失败");
 
       const steps = [
-        { label: "拉起双开微信当前聊天页", action: "open_app_profile", app: "微信", package: "com.tencent.mm", index: 2, wait_ms: 1200 },
-        { label: "自动聚焦当前微信消息框", action: "tap", x: defaultFocus.x, y: defaultFocus.y, wait_ms: 750 },
-        { label: "自动点击百度剪贴板内容卡片", action: "tap", x: defaultClip.x, y: defaultClip.y, wait_ms: 800 },
-        { label: "自动点击当前微信发送键", action: "tap", x: defaultSend.x, y: defaultSend.y, wait_ms: 850 }
+        { label: "拉起双开微信当前聊天页", action: "open_app_profile", app: "微信", package: "com.tencent.mm", index: 2, wait_ms: 800 },
+        { label: "聚焦当前微信消息框", action: "tap", x: defaultFocus.x, y: defaultFocus.y, wait_ms: 500 },
+        { label: "点击百度剪贴板内容卡片", action: "tap", x: defaultClip.x, y: defaultClip.y, wait_ms: 550 },
+        { label: "发送当前微信消息", action: "tap", x: defaultSend.x, y: defaultSend.y, wait_ms: 550 }
       ];
       const result = await postCommand({ action: "run_sequence", device_id, steps, payload: { steps, stop_on_error: true }, stop_on_error: true });
       const id = result?.command?.id;
-      const observed = id ? await waitCommand(id, wait_seconds) : null;
+      const observed = id ? await waitCommand(id, Math.min(wait_seconds, 14)) : null;
       return textResult({
         queued: result,
         clipboard_status: copyObserved?.command || null,
         observed_status: observed?.command || null,
-        contact_text: "CURRENT",
+        contact_text: "CURRENT_CLIPBOARD",
         sent_text: text,
-        mode: "current_chat_autobox",
-        auto_points: { focus: defaultFocus, clip: defaultClip, send: defaultSend },
-        note: "CURRENT 模式无需模型自行寻找微信消息框；仅适用于当前已经打开的目标聊天。"
+        mode: "current_chat_clipboard_fallback"
       });
     }
 
