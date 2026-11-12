@@ -2102,13 +2102,15 @@ function makeServer({ allowedToolNames = null, principal = {} } = {}) {
     device_id: z.string().default(DEFAULT_DEVICE),
     wait_seconds: z.number().int().min(8).max(40).default(22)
   }, async ({ filename = "LATEST", caption = "", auto_choose_douyin = true, clone_target_index = 2, device_id = DEFAULT_DEVICE, wait_seconds = 22 }) => {
+    const directPackageMode = !auto_choose_douyin;
     const share = await postCommand({
       action: "share_post_inbox",
       device_id,
       filename,
       caption,
-      chooser: true,
-      payload: { filename, caption, chooser: true }
+      chooser: !directPackageMode,
+      package: directPackageMode ? "com.ss.android.ugc.aweme" : "",
+      payload: { filename, caption, chooser: !directPackageMode, package: directPackageMode ? "com.ss.android.ugc.aweme" : "" }
     });
     const shareId = share?.command?.id;
     const shareObserved = shareId ? await waitCommand(shareId, Math.min(wait_seconds, 16)) : null;
