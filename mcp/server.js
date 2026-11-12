@@ -1316,7 +1316,7 @@ function makeServer({ allowedToolNames = null, principal = {} } = {}) {
     return textResult({ queued: result, observed_status: observed?.command || null, note: "视觉模式：只在已确认当前处于会话页时调用；操作后请读取 latest_screen 复核。" });
   });
 
-  server.tool("wechat_open_chat", "打开双开微信中的指定会话。普通联系人名仍尝试无障碍；视觉模式可在 contact_text 后附 |tap=x,y，由截图确认坐标后直接点会话行。", {
+  server.tool("wechat_open_chat", "打开双开微信中的指定会话，也可控制当前微信页面。普通联系人名尝试无障碍；视觉模式可在 contact_text 后附 |tap=x,y。若微信表情面板已打开，可直接传 STICKERS_RIGHT / STICKERS_LEFT 横向翻表情分类栏；可加 _2、_3、_4 连续翻多次，例如 STICKERS_RIGHT_2 表示显示更右侧的表情包分类。", {
     contact_text: z.string().min(1).max(80), device_id: z.string().default(DEFAULT_DEVICE), wait_seconds: z.number().int().min(5).max(40).default(26)
   }, async ({ contact_text, device_id = DEFAULT_DEVICE, wait_seconds = 26 }) => {
     const visualTap = wechatCoordHint(contact_text, "tap");
@@ -1325,10 +1325,27 @@ function makeServer({ allowedToolNames = null, principal = {} } = {}) {
     const currentSwipeStart = wechatCoordHint(contact_text, "swipestart");
     const currentSwipeEnd = wechatCoordHint(contact_text, "swipeend");
     const label = wechatContactLabel(contact_text);
+    const stickerScrollMatch = String(label || "").trim().match(/^STICKERS_(RIGHT|LEFT)(?:_([1-4]))?$/i);
     const steps = currentTap ? [] : [
-      { label: "打开双开微信", action: "open_app_profile", app: "微信", package: "com.tencent.mm", index: 2, wait_ms: 2800 }
+      { label: "打开双开微信", action: "open_app_profile", app: "微信", package: "com.tencent.mm", index: 2, wait_ms: stickerScrollMatch ? 1400 : 2800 }
     ];
-    if (currentSwipeStart && currentSwipeEnd) {
+    if (stickerScrollMatch) {
+      const towardRight = stickerScrollMatch[1].toUpperCase() === "RIGHT";
+      const repeat = Math.max(1, Math.min(4, Number(stickerScrollMatch[2] || 1)));
+      // 微信表情分类栏位于输入框上方；“看右侧分类”需要手指向左滑，反之亦然。
+      const y = 1400;
+      const x1 = towardRight ? 900 : 220;
+      const x2 = towardRight ? 220 : 900;
+      for (let n = 0; n < repeat; n++) {
+        steps.push({
+          label: `横向翻微信表情分类 ${n + 1}/${repeat}`,
+          action: "swipe",
+          x1, y1: y, x2, y2: y,
+          duration: 520,
+          wait_ms: 700
+        });
+      }
+    } else if (currentSwipeStart && currentSwipeEnd) {
       if ([currentSwipeStart, currentSwipeEnd].some(p => p.x < 0 || p.x > 1080 || p.y < 120 || p.y > 2390)) throw new Error("微信当前屏幕滑动坐标超出安全范围");
       steps.push({ label: "直接滑动当前微信屏幕", action: "swipe", x1: currentSwipeStart.x, y1: currentSwipeStart.y, x2: currentSwipeEnd.x, y2: currentSwipeEnd.y, duration: 650, wait_ms: 1200 });
     } else if (currentTap) {
@@ -1346,7 +1363,7 @@ function makeServer({ allowedToolNames = null, principal = {} } = {}) {
     const result = await postCommand({ action: "run_sequence", device_id, steps, payload: { steps, stop_on_error: true }, stop_on_error: true });
     const id = result?.command?.id;
     const observed = id ? await waitCommand(id, wait_seconds) : null;
-    return textResult({ queued: result, observed_status: observed?.command || null, contact_text: label, visual_tap: visualTap || null, visual_hold: visualHold || null, current_tap: currentTap || null, current_swipe_start: currentSwipeStart || null, current_swipe_end: currentSwipeEnd || null });
+    return textResult({ queued: result, observed_status: observed?.command || null, contact_text: label, visual_tap: visualTap || null, visual_hold: visualHold || null, current_tap: currentTap || null, current_swipe_start: currentSwipeStart || null, current_swipe_end: currentSwipeEnd || null, sticker_category_scroll: stickerScrollMatch ? { direction: stickerScrollMatch[1].toUpperCase(), repeat: Math.max(1, Math.min(4, Number(stickerScrollMatch[2] || 1))) } : null });
   });
 
   server.tool("wechat_scroll_current_chat", "滚动当前双开微信聊天页。用于读取更早/更新的聊天记录、长消息或聊天记录卡片内容。direction=older 表示看更早的消息；newer 表示看后面的消息；up/down 表示手指实际上滑/下滑。会先拉起双开微信当前页面，不切联系人，不发送消息；滚动后应配合 peek_screen/latest_screen 继续读取。", {
