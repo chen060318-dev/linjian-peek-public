@@ -45,7 +45,12 @@ public final class PostInboxStore {
             }
             return new JSONObject().put("ok", false).put("result", "unsupported_post_inbox_action:" + action);
         } catch (Exception e) {
-            return new JSONObject().put("ok", false).put("result", "post_inbox_error:" + e.getClass().getSimpleName() + ":" + String.valueOf(e.getMessage()));
+            JSONObject error = new JSONObject();
+            try {
+                error.put("ok", false);
+                error.put("result", "post_inbox_error:" + e.getClass().getSimpleName() + ":" + String.valueOf(e.getMessage()));
+            } catch (Exception ignored) { }
+            return error;
         }
     }
 
