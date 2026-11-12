@@ -1186,7 +1186,7 @@ const WECHAT_ALLOWED_TOOLS = new Set([
 
 
 function makeServer({ allowedToolNames = null, principal = {} } = {}) {
-  const server = new McpServer({ name: "掌心窗", version: "0.3.9.1" });
+  const server = new McpServer({ name: "掌心窗", version: "0.3.9.7-postbox" });
   const commandBackedTools = new Set([
     "peek_screen", "get_screen_nodes", "tap_text", "input_text", "draft_xhs_comment", "xhs_comment", "send_visible_comment_after_confirmation",
     "douyin_open_messages", "douyin_open_chat", "douyin_check_streak", "douyin_draft_message", "douyin_send_message", "douyin_list_publish_media", "douyin_prepare_post", "douyin_publish_current_post",
@@ -2557,7 +2557,7 @@ function makeServer({ allowedToolNames = null, principal = {} } = {}) {
       postInbox = { ok: false, error: String(e?.message || e) };
     }
     await postCompanionAction("get_senses_state", { device_id });
-    return { content: [{ type: "text", text: JSON.stringify({ ok: true, device_id, life_state: life?.life_state || life?.state || life, guidian_state: guidian?.guidian_state || {}, post_inbox_status: postInbox }, null, 2) }] };
+    return { content: [{ type: "text", text: JSON.stringify({ ok: true, mcp_runtime_version: "0.3.9.7-postbox", device_id, life_state: life?.life_state || life?.state || life, guidian_state: guidian?.guidian_state || {}, post_inbox_status: postInbox }, null, 2) }] };
   });
 
 
