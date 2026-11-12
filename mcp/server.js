@@ -2542,13 +2542,22 @@ function makeServer({ allowedToolNames = null, principal = {} } = {}) {
   });
 
 
-  server.tool("get_senses_state", "读取掌心窗通用状态：生活状态与归电状态，不截图。用于确认当前设备和陪伴连接状态。", { device_id: z.string().default(DEFAULT_DEVICE) }, async ({ device_id = DEFAULT_DEVICE }) => {
+  server.tool("get_senses_state", "读取掌心窗通用状态：生活状态与归电状态，不截图。用于确认当前设备和陪伴连接状态。当前兼容层还会附带待发布素材箱摘要，便于旧会话在工具 schema 未刷新时验收抖音发布素材。", { device_id: z.string().default(DEFAULT_DEVICE) }, async ({ device_id = DEFAULT_DEVICE }) => {
     const lifeRes = await linjianFetch(`/api/life_state?device_id=${encodeURIComponent(device_id)}`);
     const life = await lifeRes.json();
     const guidianRes = await linjianFetch(`/api/guidian_state?device_id=${encodeURIComponent(device_id)}`);
     const guidian = await guidianRes.json();
+    let postInbox = null;
+    try {
+      const queued = await postCommand({ action: "list_post_inbox", device_id, payload: {} });
+      const id = queued?.command?.id;
+      const observed = id ? await waitCommand(id, 10) : null;
+      postInbox = observed?.command || null;
+    } catch (e) {
+      postInbox = { ok: false, error: String(e?.message || e) };
+    }
     await postCompanionAction("get_senses_state", { device_id });
-    return { content: [{ type: "text", text: JSON.stringify({ ok: true, device_id, life_state: life?.life_state || life?.state || life, guidian_state: guidian?.guidian_state || {} }, null, 2) }] };
+    return { content: [{ type: "text", text: JSON.stringify({ ok: true, device_id, life_state: life?.life_state || life?.state || life, guidian_state: guidian?.guidian_state || {}, post_inbox_status: postInbox }, null, 2) }] };
   });
 
 
