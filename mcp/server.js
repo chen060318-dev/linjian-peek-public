@@ -1160,7 +1160,7 @@ const COMPANION_ALLOWED_TOOLS = new Set([
   "get_screen_break_state", "screen_break_app", "temporary_screen_break_release",
   "end_screen_break", "extend_screen_break", "deny_screen_break_release_request",
   "list_screen_break_apps", "list_lockable_apps",
-  "douyin_open_messages", "douyin_open_chat", "douyin_check_streak", "douyin_draft_message", "douyin_send_message",
+  "douyin_open_messages", "douyin_open_chat", "douyin_check_streak", "douyin_draft_message", "douyin_send_message", "douyin_list_publish_media", "douyin_prepare_post", "douyin_publish_current_post",
   "wechat_probe_clone", "wechat_open_chats", "wechat_open_chat", "wechat_read_chat", "wechat_draft_message", "wechat_send_message", "wechat_quick_send_current",
   "wechat_scroll_current_chat", "wechat_tap_current_screen", "wechat_open_sticker_category", "wechat_scroll_sticker_categories", "wechat_send_sticker_current", "wechat_visual_nav"
 ]);
@@ -1169,7 +1169,10 @@ const DOUYIN_ALLOWED_TOOLS = new Set([
   "douyin_open_chat",
   "douyin_check_streak",
   "douyin_draft_message",
-  "douyin_send_message"
+  "douyin_send_message",
+  "douyin_list_publish_media",
+  "douyin_prepare_post",
+  "douyin_publish_current_post"
 ]);
 const WECHAT_ALLOWED_TOOLS = new Set([
   "wechat_probe_clone",
@@ -1186,7 +1189,7 @@ function makeServer({ allowedToolNames = null, principal = {} } = {}) {
   const server = new McpServer({ name: "掌心窗", version: "0.3.9.1" });
   const commandBackedTools = new Set([
     "peek_screen", "get_screen_nodes", "tap_text", "input_text", "draft_xhs_comment", "xhs_comment", "send_visible_comment_after_confirmation",
-    "douyin_open_messages", "douyin_open_chat", "douyin_check_streak", "douyin_draft_message", "douyin_send_message",
+    "douyin_open_messages", "douyin_open_chat", "douyin_check_streak", "douyin_draft_message", "douyin_send_message", "douyin_list_publish_media", "douyin_prepare_post", "douyin_publish_current_post",
     "wechat_visual_nav", "wechat_quick_send_current", "wechat_scroll_current_chat", "wechat_tap_current_screen", "wechat_open_sticker_category", "wechat_scroll_sticker_categories", "wechat_send_sticker_current",
     "add_guardian_calendar_event", "care_action", "trigger_guidian", "mark_guidian_returned",
     "set_guidian_config", "send_weather_notification", "send_phone_command", "open_app", "phone_home", "phone_back", "phone_recents",
@@ -2074,6 +2077,80 @@ function makeServer({ allowedToolNames = null, principal = {} } = {}) {
     const id = result?.command?.id;
     const observed = id ? await waitCommand(id, wait_seconds) : null;
     return { content: [{ type: "text", text: JSON.stringify({ queued: result, observed_status: observed?.command || null, note: "只输入草稿，不会发送。" }, null, 2) }] };
+  });
+
+
+  server.tool("douyin_list_publish_media", "读取掌心窗『待发布素材箱』。这里只能看到用户主动从相册/文件分享给掌心窗的图片或视频，不读取整个相册。用于准备抖音作品前选择素材。", {
+    device_id: z.string().default(DEFAULT_DEVICE),
+    wait_seconds: z.number().int().min(5).max(25).default(12)
+  }, async ({ device_id = DEFAULT_DEVICE, wait_seconds = 12 }) => {
+    const result = await postCommand({ action: "list_post_inbox", device_id, payload: {} });
+    const id = result?.command?.id;
+    const observed = id ? await waitCommand(id, wait_seconds) : null;
+    return textResult({
+      queued: result,
+      observed_status: observed?.command || null,
+      note: "手机端 result 中的 items 是待发布素材列表；LATEST 表示最新一份。素材箱只包含用户主动分享给掌心窗的文件。"
+    });
+  });
+
+  server.tool("douyin_prepare_post", "把掌心窗待发布素材箱中的一份图片/视频交给抖音，准备作品发布页。不会点击最终『发布』。默认通过系统分享选择器选择第 2 个『抖音』目标以适配本机双开抖音；首次使用应复核是否进入了正确的双开账号。filename 可用 LATEST。caption 会作为分享文本一并传给抖音，但抖音是否自动填入文案取决于客户端版本。", {
+    filename: z.string().default("LATEST"),
+    caption: z.string().max(2000).default(""),
+    auto_choose_douyin: z.boolean().default(true),
+    clone_target_index: z.number().int().min(1).max(4).default(2),
+    device_id: z.string().default(DEFAULT_DEVICE),
+    wait_seconds: z.number().int().min(8).max(40).default(22)
+  }, async ({ filename = "LATEST", caption = "", auto_choose_douyin = true, clone_target_index = 2, device_id = DEFAULT_DEVICE, wait_seconds = 22 }) => {
+    const share = await postCommand({
+      action: "share_post_inbox",
+      device_id,
+      filename,
+      caption,
+      chooser: true,
+      payload: { filename, caption, chooser: true }
+    });
+    const shareId = share?.command?.id;
+    const shareObserved = shareId ? await waitCommand(shareId, Math.min(wait_seconds, 16)) : null;
+
+    let chooserQueued = null;
+    let chooserObserved = null;
+    if (auto_choose_douyin && shareObserved?.command?.status === "completed") {
+      const steps = [
+        { label: "在系统分享面板选择双开抖音", action: "tap_text", target_text: "抖音", match: "contains", index: clone_target_index, wait_ms: 1800 }
+      ];
+      chooserQueued = await postCommand({ action: "run_sequence", device_id, steps, payload: { steps, stop_on_error: false }, stop_on_error: false });
+      const chooserId = chooserQueued?.command?.id;
+      chooserObserved = chooserId ? await waitCommand(chooserId, Math.min(wait_seconds, 14)) : null;
+    }
+
+    return textResult({
+      share_queued: share,
+      share_status: shareObserved?.command || null,
+      chooser_queued: chooserQueued,
+      chooser_status: chooserObserved?.command || null,
+      filename,
+      caption,
+      clone_target_index,
+      safety_note: "这里只准备发布页，不点击最终发布。首次使用需确认第 2 个『抖音』确实是双开账号；若不是，可调整 clone_target_index。"
+    });
+  });
+
+  server.tool("douyin_publish_current_post", "发布当前已经准备好的抖音作品。会真实点击当前抖音页面中的『发布』按钮；只有用户明确说『发布/发出去』并且当前页面已经确认是正确作品与正确账号时才可调用。", {
+    device_id: z.string().default(DEFAULT_DEVICE),
+    wait_seconds: z.number().int().min(5).max(30).default(16)
+  }, async ({ device_id = DEFAULT_DEVICE, wait_seconds = 16 }) => {
+    const steps = [
+      { label: "最终发布抖音作品", action: "tap_text", package: "com.ss.android.ugc.aweme", target_text: "发布", match: "exact", index: 1, wait_ms: 1600 }
+    ];
+    const result = await postCommand({ action: "run_sequence", device_id, steps, payload: { steps, stop_on_error: true }, stop_on_error: true });
+    const id = result?.command?.id;
+    const observed = id ? await waitCommand(id, wait_seconds) : null;
+    return textResult({
+      queued: result,
+      observed_status: observed?.command || null,
+      safety_note: "这是最终发布动作。若页面存在多个『发布』控件或按钮未匹配，请不要盲目重试，应先读取/截图确认当前页面。"
+    });
   });
 
 
