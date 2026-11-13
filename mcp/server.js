@@ -1162,7 +1162,8 @@ const COMPANION_ALLOWED_TOOLS = new Set([
   "list_screen_break_apps", "list_lockable_apps",
   "douyin_open_messages", "douyin_open_chat", "douyin_check_streak", "douyin_draft_message", "douyin_send_message", "douyin_list_publish_media", "douyin_prepare_post", "douyin_publish_current_post",
   "wechat_probe_clone", "wechat_open_chats", "wechat_open_chat", "wechat_read_chat", "wechat_draft_message", "wechat_send_message", "wechat_quick_send_current",
-  "wechat_scroll_current_chat", "wechat_tap_current_screen", "wechat_open_sticker_category", "wechat_scroll_sticker_categories", "wechat_send_sticker_current", "wechat_visual_nav"
+  "wechat_scroll_current_chat", "wechat_tap_current_screen", "wechat_open_sticker_category", "wechat_scroll_sticker_categories", "wechat_send_sticker_current", "wechat_visual_nav",
+  "wechat_list_background_inbox", "wechat_reply_background_event"
 ]);
 const DOUYIN_ALLOWED_TOOLS = new Set([
   "douyin_open_messages",
@@ -1181,16 +1182,17 @@ const WECHAT_ALLOWED_TOOLS = new Set([
   "wechat_read_chat",
   "wechat_draft_message",
   "wechat_send_message", "wechat_quick_send_current",
-  "wechat_scroll_current_chat", "wechat_tap_current_screen", "wechat_open_sticker_category", "wechat_scroll_sticker_categories", "wechat_send_sticker_current", "wechat_visual_nav"
+  "wechat_scroll_current_chat", "wechat_tap_current_screen", "wechat_open_sticker_category", "wechat_scroll_sticker_categories", "wechat_send_sticker_current", "wechat_visual_nav",
+  "wechat_list_background_inbox", "wechat_reply_background_event"
 ]);
 
 
 function makeServer({ allowedToolNames = null, principal = {} } = {}) {
-  const server = new McpServer({ name: "掌心窗", version: "0.3.9.7-postbox" });
+  const server = new McpServer({ name: "掌心窗", version: "0.3.9.8-wechatbridge" });
   const commandBackedTools = new Set([
     "peek_screen", "get_screen_nodes", "tap_text", "input_text", "draft_xhs_comment", "xhs_comment", "send_visible_comment_after_confirmation",
     "douyin_open_messages", "douyin_open_chat", "douyin_check_streak", "douyin_draft_message", "douyin_send_message", "douyin_list_publish_media", "douyin_prepare_post", "douyin_publish_current_post",
-    "wechat_visual_nav", "wechat_quick_send_current", "wechat_scroll_current_chat", "wechat_tap_current_screen", "wechat_open_sticker_category", "wechat_scroll_sticker_categories", "wechat_send_sticker_current",
+    "wechat_visual_nav", "wechat_quick_send_current", "wechat_scroll_current_chat", "wechat_tap_current_screen", "wechat_open_sticker_category", "wechat_scroll_sticker_categories", "wechat_send_sticker_current", "wechat_list_background_inbox", "wechat_reply_background_event",
     "add_guardian_calendar_event", "care_action", "trigger_guidian", "mark_guidian_returned",
     "set_guidian_config", "send_weather_notification", "send_phone_command", "open_app", "phone_home", "phone_back", "phone_recents",
     "phone_screen_off", "send_notification", "set_alarm", "run_sequence", "run_preset", "save_known_app", "screen_break_app",
