@@ -1291,6 +1291,47 @@ function makeServer({ allowedToolNames = null, principal = {} } = {}) {
     });
   });
 
+  server.tool("wechat_list_background_inbox", "读取掌心窗后台捕获的双开微信新消息。只读取 UserHandle{999} 的双开微信通知，绝不读取手机主微信。用于后台消息处理，不会打开微信、不会发送消息。", {
+    limit: z.number().int().min(1).max(30).default(10),
+    device_id: z.string().default(DEFAULT_DEVICE),
+    wait_seconds: z.number().int().min(5).max(30).default(18)
+  }, async ({ limit = 10, device_id = DEFAULT_DEVICE, wait_seconds = 18 }) => {
+    const result = await postCommand({ action: "list_wechat_clone_inbox", device_id, limit, payload: { limit } });
+    const id = result?.command?.id;
+    const observed = id ? await waitCommand(id, wait_seconds) : null;
+    return textResult({
+      queued: result,
+      observed_status: observed?.command || null,
+      mode: "clone_notification_inbox",
+      safety_note: "Android 端硬限制 UserHandle{999}；主微信通知不会进入此消息箱。"
+    });
+  });
+
+  server.tool("wechat_reply_background_event", "通过 Android 通知的 RemoteInput 在后台回复一条双开微信消息，不需要把微信切到前台。只允许 UserHandle{999} 的双开微信；如果该条微信通知没有提供系统级直接回复能力，工具会返回 inline_reply_unavailable，绝不改用主微信。用户已开启后台自动回复时可用于对应消息事件。", {
+    event_id: z.string().min(1).max(120).default("LATEST"),
+    text: z.string().min(1).max(500),
+    device_id: z.string().default(DEFAULT_DEVICE),
+    wait_seconds: z.number().int().min(5).max(30).default(18)
+  }, async ({ event_id = "LATEST", text, device_id = DEFAULT_DEVICE, wait_seconds = 18 }) => {
+    const result = await postCommand({
+      action: "reply_wechat_clone_notification",
+      device_id,
+      event_id,
+      text,
+      payload: { event_id, text }
+    });
+    const id = result?.command?.id;
+    const observed = id ? await waitCommand(id, wait_seconds) : null;
+    return textResult({
+      queued: result,
+      observed_status: observed?.command || null,
+      event_id,
+      sent_text: text,
+      mode: "clone_notification_remote_input",
+      safety_note: "仅双开微信 UserHandle{999}；不会切换或发送到主微信。"
+    });
+  });
+
   server.tool("wechat_probe_clone", "只打开双开微信并读取当前页面无障碍节点，用于确认双开实例与页面结构；不会点击联系人或发送消息。", {
     device_id: z.string().default(DEFAULT_DEVICE), wait_seconds: z.number().int().min(5).max(35).default(22)
   }, async ({ device_id = DEFAULT_DEVICE, wait_seconds = 22 }) => {
