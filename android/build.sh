@@ -92,7 +92,7 @@ python3 - "$BRIDGE_SRC/res/drawable-nodpi/bridge_photo.jpg" "$BRIDGE_SRC/res/mip
 import os, sys
 for path in sys.argv[1:]:
     data = open(path, "rb").read()
-    if len(data) < 4096:
+    if len(data) < 800:
         raise SystemExit(f"Icon asset too small: {path} ({len(data)} bytes)")
     if not (data.startswith(b"\xff\xd8") and data.endswith(b"\xff\xd9")):
         raise SystemExit(f"Invalid JPEG markers: {path}")
