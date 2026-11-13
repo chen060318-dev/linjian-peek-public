@@ -13,6 +13,7 @@ import calendar
 import hmac
 import json
 import os
+import secrets
 import subprocess
 import sys
 import time
@@ -27,7 +28,7 @@ from urllib.request import Request, urlopen
 DEFAULT_PORT = 8513
 DEFAULT_KEEP = 3
 MAX_UPLOAD_BYTES = 24 * 1024 * 1024
-VERSION = "0.3.9.8-wechatbridge"
+VERSION = "0.3.9.9-wechat-side-bridge"
 DEFAULT_DEVICE = os.environ.get("LINJIAN_DEFAULT_DEVICE", "android-phone")
 ACTIVITY_EVENT_LIMIT = 500
 DEFAULT_COMMAND_TTL_SECONDS = int(os.environ.get("LINJIAN_COMMAND_TTL_SECONDS", "300"))
@@ -227,6 +228,11 @@ class State:
         self.commands_lock = Lock()
         self.device_states: dict[str, dict] = {}
         self.unlock_requests: list[dict] = []
+        self.wechat_bridge_lock = Lock()
+        self.wechat_bridge_pair_codes: dict[str, dict] = {}
+        self.wechat_bridge_tokens: dict[str, dict] = {}
+        self.wechat_bridge_events: list[dict] = []
+        self.wechat_bridge_replies: list[dict] = []
         self.companion_path = self.data_dir / "companion_state.json"
         self.companion_lock = Lock()
         self.companion_state = self._load_companion_state()
@@ -443,6 +449,21 @@ class Handler(BaseHTTPRequestHandler):
         if self._token_ok(): return True
         self._json(403, {"ok": False, "error": ERR_BAD_TOKEN}); return False
 
+    def _bridge_session(self) -> dict | None:
+        supplied = (self.headers.get("X-Bridge-Token", "") or "").strip()
+        if not supplied:
+            return None
+        with self.state.wechat_bridge_lock:
+            session = self.state.wechat_bridge_tokens.get(supplied)
+            return dict(session) if session else None
+
+    def _require_bridge_token(self) -> dict | None:
+        session = self._bridge_session()
+        if session:
+            return session
+        self._json(403, {"ok": False, "error": "bridge_bad_token"})
+        return None
+
     def _read_json(self) -> dict:
         length = int(self.headers.get("Content-Length", 0) or 0)
         if length <= 0: return {}
@@ -466,12 +487,41 @@ class Handler(BaseHTTPRequestHandler):
         if path in ("/", "/health"):
             self._json(200, {"ok": True, "service": "linjian-phone-backend", "name": "掌心窗", "version": VERSION, "token_required_for_api": True})
             return
+        if path == "/bridge/status":
+            session = self._require_bridge_token()
+            if not session: return
+            self._json(200, {"ok": True, "device_id": session.get("device_id") or "wechat-bridge", "paired": True, "version": VERSION}); return
+        if path == "/bridge/replies":
+            session = self._require_bridge_token()
+            if not session: return
+            device_id = session.get("device_id") or "wechat-bridge"
+            now_ms = int(time.time() * 1000)
+            items = []
+            with self.state.wechat_bridge_lock:
+                for item in self.state.wechat_bridge_replies:
+                    if item.get("device_id") != device_id or item.get("status") == "acked":
+                        continue
+                    last_ms = int(item.get("dispatched_at_ms") or 0)
+                    if item.get("status") == "dispatched" and now_ms - last_ms < 30000:
+                        continue
+                    item["status"] = "dispatched"
+                    item["dispatched_at_ms"] = now_ms
+                    item["attempts"] = int(item.get("attempts") or 0) + 1
+                    items.append(dict(item))
+                    if len(items) >= 5: break
+            self._json(200, {"ok": True, "device_id": device_id, "items": items, "count": len(items)}); return
         # 所有 /api/* 入口统一先验证手机同步 Token，防止新增路由漏掉单独检查。
         if path.startswith("/api/") and not self._require_token():
             return
         if path in ("/mcp", "/sse"):
             self._json(400, {"ok": False, "error": "LINJIAN_ERR_WRONG_SERVICE", "message": "你访问的是掌心窗 server 服务，不是 MCP 服务。请单独部署 mcp 目录，并在 MCP 客户端填写 MCP 服务域名 + /mcp 或 /sse。"})
             return
+        if path == "/api/wechat-bridge/events":
+            limit = max(1, min(50, int(qs.get("limit", ["10"])[0] or 10)))
+            with self.state.wechat_bridge_lock:
+                items = [dict(x) for x in self.state.wechat_bridge_events[:limit]]
+                paired_count = len(self.state.wechat_bridge_tokens)
+            self._json(200, {"ok": True, "items": items, "count": len(items), "paired_count": paired_count, "mode": "wechat_side_bridge"}); return
         if path == "/api/companion/state":
             if not self._require_token(): return
             limit = max(1, min(50, int(qs.get("limit", ["20"])[0] or 20)))
@@ -578,9 +628,87 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         path = urlparse(self.path).path
+        if path == "/bridge/pair":
+            data = self._read_json()
+            code = str(data.get("code") or "").strip()
+            device_id = clip_text(str(data.get("device_id") or "wechat-bridge"), 80)
+            now_ms = int(time.time() * 1000)
+            with self.state.wechat_bridge_lock:
+                pair = self.state.wechat_bridge_pair_codes.get(code)
+                if not pair or now_ms > int(pair.get("expires_at_ms") or 0):
+                    self.state.wechat_bridge_pair_codes.pop(code, None)
+                    self._json(403, {"ok": False, "error": "pair_code_invalid_or_expired"}); return
+                self.state.wechat_bridge_pair_codes.pop(code, None)
+                token = secrets.token_urlsafe(32)
+                self.state.wechat_bridge_tokens[token] = {"device_id": device_id, "paired_at_ms": now_ms}
+            self._json(200, {"ok": True, "bridge_token": token, "device_id": device_id, "server_url": self._public_base()}); return
+        if path == "/bridge/event":
+            session = self._require_bridge_token()
+            if not session: return
+            data = self._read_json()
+            event_id = clip_text(str(data.get("id") or ""), 120)
+            if not event_id:
+                self._json(400, {"ok": False, "error": "event_id_required"}); return
+            event = {
+                "id": event_id,
+                "device_id": session.get("device_id") or "wechat-bridge",
+                "sender": clip_text(str(data.get("sender") or ""), 160),
+                "text": clip_text(str(data.get("text") or ""), 1200),
+                "notification_key": clip_text(str(data.get("notification_key") or ""), 300),
+                "posted_at_ms": int(data.get("posted_at_ms") or 0),
+                "received_at_ms": int(time.time() * 1000),
+                "can_inline_reply": bool(data.get("can_inline_reply")),
+            }
+            with self.state.wechat_bridge_lock:
+                self.state.wechat_bridge_events = [event] + [x for x in self.state.wechat_bridge_events if x.get("id") != event_id]
+                del self.state.wechat_bridge_events[50:]
+            self._json(200, {"ok": True, "event_id": event_id}); return
+        if path == "/bridge/reply-ack":
+            session = self._require_bridge_token()
+            if not session: return
+            data = self._read_json()
+            reply_id = str(data.get("reply_id") or "").strip()
+            with self.state.wechat_bridge_lock:
+                target = next((x for x in self.state.wechat_bridge_replies if x.get("id") == reply_id and x.get("device_id") == session.get("device_id")), None)
+                if target:
+                    target["status"] = "acked"
+                    target["ack_status"] = clip_text(str(data.get("status") or "sent"), 80)
+                    target["acked_at_ms"] = int(time.time() * 1000)
+            self._json(200, {"ok": bool(target), "reply_id": reply_id}); return
         # POST API 同样采用统一入口校验；OAuth 只存在于独立 MCP 服务，不与手机 Token 混用。
         if path.startswith("/api/") and not self._require_token():
             return
+        if path == "/api/wechat-bridge/pair-code":
+            data = self._read_json()
+            device_id = clip_text(str(data.get("device_id") or "wechat-bridge"), 80)
+            code = f"{secrets.randbelow(1000000):06d}"
+            now_ms = int(time.time() * 1000)
+            with self.state.wechat_bridge_lock:
+                self.state.wechat_bridge_pair_codes[code] = {"device_id": device_id, "created_at_ms": now_ms, "expires_at_ms": now_ms + 10 * 60 * 1000}
+            self._json(200, {"ok": True, "code": code, "expires_in_seconds": 600, "device_id": device_id, "server_url": self._public_base()}); return
+        if path == "/api/wechat-bridge/reply":
+            data = self._read_json()
+            wanted = str(data.get("event_id") or "LATEST").strip() or "LATEST"
+            text_value = clip_text(str(data.get("text") or ""), 500)
+            if not text_value:
+                self._json(400, {"ok": False, "error": "reply_text_required"}); return
+            with self.state.wechat_bridge_lock:
+                event = (self.state.wechat_bridge_events[0] if wanted.upper() == "LATEST" and self.state.wechat_bridge_events
+                         else next((x for x in self.state.wechat_bridge_events if x.get("id") == wanted), None))
+                if not event:
+                    self._json(404, {"ok": False, "error": "wechat_bridge_event_not_found"}); return
+                reply = {
+                    "id": str(uuid.uuid4()),
+                    "event_id": event.get("id"),
+                    "device_id": event.get("device_id") or "wechat-bridge",
+                    "text": text_value,
+                    "status": "pending",
+                    "created_at_ms": int(time.time() * 1000),
+                    "attempts": 0,
+                }
+                self.state.wechat_bridge_replies.insert(0, reply)
+                del self.state.wechat_bridge_replies[100:]
+            self._json(200, {"ok": True, "queued": True, "reply": reply}); return
         if path in ("/mcp", "/sse"):
             self._json(400, {"ok": False, "error": "LINJIAN_ERR_WRONG_SERVICE", "message": "你访问的是掌心窗 server 服务，不是 MCP 服务。请单独部署 mcp 目录，并在 MCP 客户端填写 MCP 服务域名 + /mcp 或 /sse。"})
             return

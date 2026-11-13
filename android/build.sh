@@ -77,3 +77,50 @@ echo ""
 echo "=== Done ==="
 echo "APK: $PROJECT/Zhangxinchuang-public-v0.3.9.7.apk"
 ls -lh "$PROJECT/Zhangxinchuang-public-v0.3.9.7.apk"
+
+
+echo ""
+echo "=== Building WeChat side bridge APK ==="
+cd "$PROJECT"
+BRIDGE_SRC=$PROJECT/wechat-bridge/src/main
+BRIDGE_OUT=$PROJECT/build_wechat_bridge
+BRIDGE_PKG_PATH=dev/linjian/peek/wechatbridge
+BRIDGE_APK=$PROJECT/Zhangxinchuang-WeChatBridge-v0.1.0.apk
+
+rm -rf "$BRIDGE_OUT"
+mkdir -p "$BRIDGE_OUT/gen" "$BRIDGE_OUT/classes" "$BRIDGE_OUT/apk" "$BRIDGE_OUT/compiled_res"
+
+$BUILD_TOOLS/aapt2 compile --dir "$BRIDGE_SRC/res" -o "$BRIDGE_OUT/compiled_res/"
+$BUILD_TOOLS/aapt2 link \
+    -o "$BRIDGE_OUT/apk/app.unsigned.apk" \
+    -I "$PLATFORM" \
+    --manifest "$BRIDGE_SRC/AndroidManifest.xml" \
+    --java "$BRIDGE_OUT/gen" \
+    --auto-add-overlay \
+    -R "$BRIDGE_OUT/compiled_res"/*.flat
+
+find "$BRIDGE_SRC/java" -name "*.java" > "$BRIDGE_OUT/sources.txt"
+echo "$BRIDGE_OUT/gen/$BRIDGE_PKG_PATH/R.java" >> "$BRIDGE_OUT/sources.txt"
+javac -encoding UTF-8 -source 11 -target 11 -classpath "$PLATFORM" -d "$BRIDGE_OUT/classes" @"$BRIDGE_OUT/sources.txt"
+
+$BUILD_TOOLS/d8 --output "$BRIDGE_OUT/apk/" --lib "$PLATFORM" $(find "$BRIDGE_OUT/classes" -name "*.class")
+cd "$BRIDGE_OUT/apk"
+cp app.unsigned.apk app.tmp.apk
+zip -d app.tmp.apk classes.dex 2>/dev/null || true
+zip -j app.tmp.apk classes.dex
+mv app.tmp.apk app.unsigned.apk
+
+$BUILD_TOOLS/zipalign -f 4 app.unsigned.apk app.aligned.apk
+$BUILD_TOOLS/apksigner sign \
+    --ks "$PUBLIC_KS" \
+    --ks-type PKCS12 \
+    --ks-pass pass:"$PUBLIC_KS_PASSWORD" \
+    --key-pass pass:"$PUBLIC_KS_PASSWORD" \
+    --ks-key-alias zhangxinchuang-public \
+    --out "$BRIDGE_APK" \
+    app.aligned.apk
+
+echo "=== Verifying WeChat bridge APK ==="
+$BUILD_TOOLS/apksigner verify --verbose --print-certs "$BRIDGE_APK"
+echo "Bridge APK: $BRIDGE_APK"
+ls -lh "$BRIDGE_APK"

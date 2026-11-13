@@ -1541,18 +1541,24 @@ function makeServer({ allowedToolNames = null, principal = {} } = {}) {
     return textResult({ queued: result, observed_status: observed?.command || null, sticker_point: { x, y }, note: "已点按当前可见微信表情；请用 peek_screen 复核是否形成消息气泡。" });
   });
 
-  server.tool("wechat_read_chat", "进入指定双开微信会话并读取当前页面无障碍节点；只读，不发送消息。兼容特殊 contact_text=BACKGROUND_INBOX：直接读取掌心窗后台捕获的 UserHandle{999} 双开微信消息箱，不打开微信前台。", {
+  server.tool("wechat_read_chat", "进入指定双开微信会话并读取当前页面无障碍节点；只读，不发送消息。特殊 contact_text=BRIDGE_PAIR 会生成陨石边牧信使的6位配对码；BACKGROUND_INBOX 读取999侧微信桥后台消息，不打开微信前台。", {
     contact_text: z.string().min(1).max(80), device_id: z.string().default(DEFAULT_DEVICE), wait_seconds: z.number().int().min(5).max(40).default(28)
   }, async ({ contact_text, device_id = DEFAULT_DEVICE, wait_seconds = 28 }) => {
-    if (/^BACKGROUND_INBOX$/i.test(String(contact_text || "").trim())) {
-      const result = await postCommand({ action: "list_wechat_clone_inbox", device_id, limit: 10, payload: { limit: 10 } });
-      const id = result?.command?.id;
-      const observed = id ? await waitCommand(id, Math.min(wait_seconds, 18)) : null;
+    const specialMode = String(contact_text || "").trim();
+    if (/^BRIDGE_PAIR$/i.test(specialMode)) {
+      const pair = await linjianFetch("/api/wechat-bridge/pair-code", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ device_id: "wechat-bridge" })
+      }).then((r) => r.json());
+      return textResult({ ...pair, mode: "wechat_side_bridge_pair", note: "在陨石边牧信使里输入这6位码；10分钟内有效。" });
+    }
+    if (/^BACKGROUND_INBOX$/i.test(specialMode)) {
+      const bridge = await linjianFetch("/api/wechat-bridge/events?limit=10").then((r) => r.json());
       return textResult({
-        queued: result,
-        observed_status: observed?.command || null,
-        mode: "clone_notification_inbox_compat",
-        safety_note: "兼容模式只读取 Android 端硬限制的 UserHandle{999} 双开微信通知消息箱；不会打开主微信或双开微信前台。"
+        ...bridge,
+        mode: "wechat_side_bridge_inbox",
+        safety_note: "消息来自安装在双开空间内的陨石边牧信使；主空间微信不经过这条桥。"
       });
     }
     const steps = [
@@ -1745,22 +1751,17 @@ function makeServer({ allowedToolNames = null, principal = {} } = {}) {
     const backgroundMatch = String(contact_text || "").trim().match(/^BACKGROUND_EVENT(?::(.+))?$/i);
     if (backgroundMatch) {
       const eventId = (backgroundMatch[1] || "LATEST").trim() || "LATEST";
-      const result = await postCommand({
-        action: "reply_wechat_clone_notification",
-        device_id,
-        event_id: eventId,
-        text,
-        payload: { event_id: eventId, text }
-      });
-      const id = result?.command?.id;
-      const observed = id ? await waitCommand(id, Math.min(wait_seconds, 18)) : null;
+      const queued = await linjianFetch("/api/wechat-bridge/reply", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ event_id: eventId, text })
+      }).then((r) => r.json());
       return textResult({
-        queued: result,
-        observed_status: observed?.command || null,
+        ...queued,
         contact_text: "BACKGROUND_EVENT:" + eventId,
         sent_text: text,
-        mode: "clone_notification_remote_input_compat",
-        safety_note: "兼容模式只允许 Android 端 UserHandle{999} 双开微信通知事件；不会切换或发送到主微信。"
+        mode: "wechat_side_bridge_remote_input",
+        safety_note: "回复只投递给已配对的双开空间陨石边牧信使，由该空间微信通知的 RemoteInput 发送。"
       });
     }
     const label = wechatContactLabel(contact_text);
