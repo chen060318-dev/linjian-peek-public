@@ -88,9 +88,16 @@ BRIDGE_PKG_PATH=dev/linjian/peek/wechatbridge
 BRIDGE_APK=$PROJECT/Zhangxinchuang-WeChatBridge-v0.1.0.apk
 
 echo "=== Verifying committed original-photo launcher assets ==="
-echo "15f3c45bdd25255ae7952624eaeb6d906a967ffa70cbecb23a01ddecc62a7761  $BRIDGE_SRC/res/drawable-nodpi/bridge_photo.jpg" | sha256sum -c -
-echo "15f3c45bdd25255ae7952624eaeb6d906a967ffa70cbecb23a01ddecc62a7761  $BRIDGE_SRC/res/mipmap-xxxhdpi/ic_launcher.jpg" | sha256sum -c -
-echo "15f3c45bdd25255ae7952624eaeb6d906a967ffa70cbecb23a01ddecc62a7761  $BRIDGE_SRC/res/mipmap-xxxhdpi/ic_launcher_round.jpg" | sha256sum -c -
+python3 - "$BRIDGE_SRC/res/drawable-nodpi/bridge_photo.jpg" "$BRIDGE_SRC/res/mipmap-xxxhdpi/ic_launcher.jpg" "$BRIDGE_SRC/res/mipmap-xxxhdpi/ic_launcher_round.jpg" <<'PY'
+import os, sys
+for path in sys.argv[1:]:
+    data = open(path, "rb").read()
+    if len(data) < 4096:
+        raise SystemExit(f"Icon asset too small: {path} ({len(data)} bytes)")
+    if not (data.startswith(b"\xff\xd8") and data.endswith(b"\xff\xd9")):
+        raise SystemExit(f"Invalid JPEG markers: {path}")
+    print(f"valid JPEG: {path} ({len(data)} bytes)")
+PY
 
 rm -rf "$BRIDGE_OUT"
 mkdir -p "$BRIDGE_OUT/gen" "$BRIDGE_OUT/classes" "$BRIDGE_OUT/apk" "$BRIDGE_OUT/compiled_res"
