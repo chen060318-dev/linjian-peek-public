@@ -87,18 +87,10 @@ BRIDGE_OUT=$PROJECT/build_wechat_bridge
 BRIDGE_PKG_PATH=dev/linjian/peek/wechatbridge
 BRIDGE_APK=$PROJECT/Zhangxinchuang-WeChatBridge-v0.1.0.apk
 
-echo "=== Restoring verified original-photo launcher assets ==="
-mkdir -p "$BRIDGE_SRC/res/drawable-nodpi" "$BRIDGE_SRC/res/mipmap-xxxhdpi"
-ICON_B64=$(cat "$PROJECT"/wechat-bridge/icon.part.*.b64 | tr -d '\\r\\n ')
-ICON_B64_LEN=$(printf %s "$ICON_B64" | wc -c | tr -d ' ')
-if [ "$ICON_B64_LEN" != "14348" ]; then
-    echo "Unexpected icon base64 length: $ICON_B64_LEN"
-    exit 1
-fi
-printf %s "$ICON_B64" | base64 -d > "$BRIDGE_SRC/res/drawable-nodpi/bridge_photo.jpg"
-cp "$BRIDGE_SRC/res/drawable-nodpi/bridge_photo.jpg" "$BRIDGE_SRC/res/mipmap-xxxhdpi/ic_launcher.jpg"
-cp "$BRIDGE_SRC/res/drawable-nodpi/bridge_photo.jpg" "$BRIDGE_SRC/res/mipmap-xxxhdpi/ic_launcher_round.jpg"
-echo "f8234f1e3035ae81da5298b1180a21407ebb79415c8181ac04600052b0c24a41  $BRIDGE_SRC/res/drawable-nodpi/bridge_photo.jpg" | sha256sum -c -
+echo "=== Verifying committed original-photo launcher assets ==="
+echo "15f3c45bdd25255ae7952624eaeb6d906a967ffa70cbecb23a01ddecc62a7761  $BRIDGE_SRC/res/drawable-nodpi/bridge_photo.jpg" | sha256sum -c -
+echo "15f3c45bdd25255ae7952624eaeb6d906a967ffa70cbecb23a01ddecc62a7761  $BRIDGE_SRC/res/mipmap-xxxhdpi/ic_launcher.jpg" | sha256sum -c -
+echo "15f3c45bdd25255ae7952624eaeb6d906a967ffa70cbecb23a01ddecc62a7761  $BRIDGE_SRC/res/mipmap-xxxhdpi/ic_launcher_round.jpg" | sha256sum -c -
 
 rm -rf "$BRIDGE_OUT"
 mkdir -p "$BRIDGE_OUT/gen" "$BRIDGE_OUT/classes" "$BRIDGE_OUT/apk" "$BRIDGE_OUT/compiled_res"
