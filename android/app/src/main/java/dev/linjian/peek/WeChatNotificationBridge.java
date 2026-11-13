@@ -24,6 +24,7 @@ import java.util.List;
 public final class WeChatNotificationBridge {
     private static final String PREFS = "wechat_clone_bridge";
     private static final String KEY_EVENTS = "events";
+    private static final String KEY_CALLBACK_META = "callback_meta";
     private static final String WECHAT_PACKAGE = "com.tencent.mm";
     private static final int TARGET_CLONE_USER_ID = 999;
     private static final int MAX_EVENTS = 30;
@@ -45,6 +46,8 @@ public final class WeChatNotificationBridge {
     }
 
     public static void capture(Context ctx, StatusBarNotification sbn) {
+        if (sbn == null || !WECHAT_PACKAGE.equals(sbn.getPackageName())) return;
+        recordCallbackMeta(ctx, sbn);
         if (!isTargetClone(sbn)) return;
         try {
             Notification n = sbn.getNotification();
@@ -123,6 +126,8 @@ public final class WeChatNotificationBridge {
             }
             out.put("active_wechat_meta", activeMeta);
             out.put("active_wechat_count", activeMeta.length());
+            out.put("callback_wechat_meta", readCallbackMeta(ctx));
+            out.put("callback_wechat_count", readCallbackMeta(ctx).length());
             out.put("diagnostic_note", "active_wechat_meta contains no notification title/body text.");
             out.put("safety_note", "Only UserHandle{999} clone WeChat message content is retained; primary WeChat content is never stored.");
         } catch (Exception ignored) {}
@@ -219,6 +224,41 @@ public final class WeChatNotificationBridge {
             ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
                     .edit().putString(KEY_EVENTS, all.toString()).apply();
         } catch (Exception ignored) {}
+    }
+
+    private static void recordCallbackMeta(Context ctx, StatusBarNotification sbn) {
+        try {
+            JSONObject meta = new JSONObject();
+            meta.put("user_hash", userHash(sbn));
+            meta.put("notification_id", sbn.getId());
+            meta.put("tag", sbn.getTag() == null ? "" : sbn.getTag());
+            meta.put("key", sbn.getKey() == null ? "" : sbn.getKey());
+            meta.put("post_time_ms", sbn.getPostTime());
+            meta.put("captured_at_ms", System.currentTimeMillis());
+            meta.put("can_inline_reply", hasRemoteInput(sbn.getNotification()));
+
+            JSONArray existing = readCallbackMeta(ctx);
+            JSONArray next = new JSONArray();
+            next.put(meta);
+            String key = meta.optString("key", "");
+            for (int i = 0; i < existing.length() && next.length() < 20; i++) {
+                JSONObject old = existing.optJSONObject(i);
+                if (old == null) continue;
+                if (!key.isEmpty() && key.equals(old.optString("key", ""))) continue;
+                next.put(old);
+            }
+            ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                    .edit().putString(KEY_CALLBACK_META, next.toString()).apply();
+        } catch (Exception ignored) {}
+    }
+
+    private static JSONArray readCallbackMeta(Context ctx) {
+        try {
+            SharedPreferences p = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+            return new JSONArray(p.getString(KEY_CALLBACK_META, "[]"));
+        } catch (Exception ignored) {
+            return new JSONArray();
+        }
     }
 
     private static JSONArray readEvents(Context ctx) {
