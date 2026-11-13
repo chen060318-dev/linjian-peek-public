@@ -33,7 +33,7 @@ public final class WeChatNotificationBridge {
     public static boolean isTargetClone(StatusBarNotification sbn) {
         if (sbn == null || !WECHAT_PACKAGE.equals(sbn.getPackageName())) return false;
         try {
-            return sbn.getUser() != null && sbn.getUser().getIdentifier() == TARGET_CLONE_USER_ID;
+            return sbn.getUser() != null && sbn.getUser().hashCode() == TARGET_CLONE_USER_ID;
         } catch (Throwable ignored) {
             return false;
         }
