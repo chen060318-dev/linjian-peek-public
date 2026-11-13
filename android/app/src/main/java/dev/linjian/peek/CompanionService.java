@@ -324,6 +324,32 @@ public class CompanionService extends Service {
                 try { reportCommand(ctx, serverUrl, token, id, ok, result); } catch (Exception ignored) { }
                 return;
             }
+            if ("list_wechat_clone_inbox".equals(action)) {
+                JSONObject rr = WeChatNotificationBridge.list(ctx, cmd.optInt("limit", 10));
+                boolean ok = rr.optBoolean("ok", false);
+                String result = rr.toString();
+                DebugState.append(ctx, "读取双开微信后台消息：" + result);
+                try { reportCommand(ctx, serverUrl, token, id, ok, result); } catch (Exception ignored) { }
+                return;
+            }
+            if ("reply_wechat_clone_notification".equals(action)) {
+                MediaNotificationService notificationService = MediaNotificationService.getInstance();
+                JSONObject rr;
+                if (notificationService == null) {
+                    rr = new JSONObject();
+                    rr.put("ok", false);
+                    rr.put("error", "notification_listener_not_connected");
+                } else {
+                    String eventId = cmd.optString("event_id", cmd.optString("message_id", "LATEST"));
+                    String replyText = cmd.optString("text", cmd.optString("reply_text", ""));
+                    rr = WeChatNotificationBridge.reply(notificationService, eventId, replyText);
+                }
+                boolean ok = rr.optBoolean("ok", false);
+                String result = rr.toString();
+                DebugState.append(ctx, "双开微信后台回复：" + result);
+                try { reportCommand(ctx, serverUrl, token, id, ok, result); } catch (Exception ignored) { }
+                return;
+            }
             if ("run_sequence".equals(action)) {
                 executeSequence(ctx, id, cmd, serverUrl, token);
                 return;
