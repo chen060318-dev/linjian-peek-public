@@ -1541,9 +1541,20 @@ function makeServer({ allowedToolNames = null, principal = {} } = {}) {
     return textResult({ queued: result, observed_status: observed?.command || null, sticker_point: { x, y }, note: "已点按当前可见微信表情；请用 peek_screen 复核是否形成消息气泡。" });
   });
 
-  server.tool("wechat_read_chat", "进入指定双开微信会话并读取当前页面无障碍节点；只读，不发送消息。", {
+  server.tool("wechat_read_chat", "进入指定双开微信会话并读取当前页面无障碍节点；只读，不发送消息。兼容特殊 contact_text=BACKGROUND_INBOX：直接读取掌心窗后台捕获的 UserHandle{999} 双开微信消息箱，不打开微信前台。", {
     contact_text: z.string().min(1).max(80), device_id: z.string().default(DEFAULT_DEVICE), wait_seconds: z.number().int().min(5).max(40).default(28)
   }, async ({ contact_text, device_id = DEFAULT_DEVICE, wait_seconds = 28 }) => {
+    if (/^BACKGROUND_INBOX$/i.test(String(contact_text || "").trim())) {
+      const result = await postCommand({ action: "list_wechat_clone_inbox", device_id, limit: 10, payload: { limit: 10 } });
+      const id = result?.command?.id;
+      const observed = id ? await waitCommand(id, Math.min(wait_seconds, 18)) : null;
+      return textResult({
+        queued: result,
+        observed_status: observed?.command || null,
+        mode: "clone_notification_inbox_compat",
+        safety_note: "兼容模式只读取 Android 端硬限制的 UserHandle{999} 双开微信通知消息箱；不会打开主微信或双开微信前台。"
+      });
+    }
     const steps = [
       { label: "打开双开微信", action: "open_app_profile", app: "微信", package: "com.tencent.mm", index: 2, wait_ms: 5000 },
       { label: "进入微信聊天页", action: "tap_text", package: "com.tencent.mm", target_text: "微信", match: "exact", wait_ms: 1500 },
@@ -1731,6 +1742,27 @@ function makeServer({ allowedToolNames = null, principal = {} } = {}) {
     contact_text: z.string().min(1).max(80), text: z.string().min(1).max(500),
     device_id: z.string().default(DEFAULT_DEVICE), wait_seconds: z.number().int().min(5).max(45).default(32)
   }, async ({ contact_text, text, device_id = DEFAULT_DEVICE, wait_seconds = 32 }) => {
+    const backgroundMatch = String(contact_text || "").trim().match(/^BACKGROUND_EVENT(?::(.+))?$/i);
+    if (backgroundMatch) {
+      const eventId = (backgroundMatch[1] || "LATEST").trim() || "LATEST";
+      const result = await postCommand({
+        action: "reply_wechat_clone_notification",
+        device_id,
+        event_id: eventId,
+        text,
+        payload: { event_id: eventId, text }
+      });
+      const id = result?.command?.id;
+      const observed = id ? await waitCommand(id, Math.min(wait_seconds, 18)) : null;
+      return textResult({
+        queued: result,
+        observed_status: observed?.command || null,
+        contact_text: "BACKGROUND_EVENT:" + eventId,
+        sent_text: text,
+        mode: "clone_notification_remote_input_compat",
+        safety_note: "兼容模式只允许 Android 端 UserHandle{999} 双开微信通知事件；不会切换或发送到主微信。"
+      });
+    }
     const label = wechatContactLabel(contact_text);
     const focusPoint = wechatCoordHint(contact_text, "focus");
     const clipPoint = wechatCoordHint(contact_text, "clip");
