@@ -32,10 +32,15 @@ public final class WeChatNotificationBridge {
 
     public static boolean isTargetClone(StatusBarNotification sbn) {
         if (sbn == null || !WECHAT_PACKAGE.equals(sbn.getPackageName())) return false;
+        return userHash(sbn) == TARGET_CLONE_USER_ID;
+    }
+
+    private static int userHash(StatusBarNotification sbn) {
+        if (sbn == null) return Integer.MIN_VALUE;
         try {
-            return sbn.getUser() != null && sbn.getUser().hashCode() == TARGET_CLONE_USER_ID;
+            return sbn.getUser() == null ? Integer.MIN_VALUE : sbn.getUser().hashCode();
         } catch (Throwable ignored) {
-            return false;
+            return Integer.MIN_VALUE;
         }
     }
 
@@ -94,7 +99,32 @@ public final class WeChatNotificationBridge {
             out.put("clone_user_id", TARGET_CLONE_USER_ID);
             out.put("items", items);
             out.put("count", items.length());
-            out.put("safety_note", "Only UserHandle{999} clone WeChat notifications are retained; primary WeChat is ignored.");
+
+            // Diagnostic metadata only: inspect active WeChat notifications without
+            // reading title/body text. This lets us discover how HyperOS exposes the
+            // cloned app's UserHandle while keeping primary-WeChat content private.
+            JSONArray activeMeta = new JSONArray();
+            MediaNotificationService service = MediaNotificationService.getInstance();
+            if (service != null) {
+                StatusBarNotification[] active = service.getActiveNotifications();
+                if (active != null) {
+                    for (StatusBarNotification sbn : active) {
+                        if (sbn == null || !WECHAT_PACKAGE.equals(sbn.getPackageName())) continue;
+                        JSONObject meta = new JSONObject();
+                        meta.put("user_hash", userHash(sbn));
+                        meta.put("notification_id", sbn.getId());
+                        meta.put("tag", sbn.getTag() == null ? "" : sbn.getTag());
+                        meta.put("key", sbn.getKey() == null ? "" : sbn.getKey());
+                        meta.put("post_time_ms", sbn.getPostTime());
+                        meta.put("can_inline_reply", hasRemoteInput(sbn.getNotification()));
+                        activeMeta.put(meta);
+                    }
+                }
+            }
+            out.put("active_wechat_meta", activeMeta);
+            out.put("active_wechat_count", activeMeta.length());
+            out.put("diagnostic_note", "active_wechat_meta contains no notification title/body text.");
+            out.put("safety_note", "Only UserHandle{999} clone WeChat message content is retained; primary WeChat content is never stored.");
         } catch (Exception ignored) {}
         return out;
     }
