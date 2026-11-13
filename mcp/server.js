@@ -2291,23 +2291,76 @@ function makeServer({ allowedToolNames = null, principal = {} } = {}) {
     return textResult({ queued: result, observed_status: observed?.command || null, contact_text, safety_note: "只写草稿，不发送。" });
   });
 
-  server.tool("douyin_send_message", "向指定抖音联系人发送一条私信，可用于续火花。该工具会真实点击发送；只应在用户授权发送时调用。", {
+  server.tool("douyin_send_message", "向指定抖音联系人发送一条私信。自动检测当前双开抖音所在页面：若已在目标聊天，直接发送，不重复点消息页；若在聊天列表或首页，先进入指定会话。CURRENT 仅用于用户已确认当前聊天对象的情况。真实发送前会检查页面和输入框。", {
     contact_text: z.string().min(1).max(80), text: z.string().min(1).max(500),
     device_id: z.string().default(DEFAULT_DEVICE), wait_seconds: z.number().int().min(5).max(40).default(28)
   }, async ({ contact_text, text, device_id = DEFAULT_DEVICE, wait_seconds = 28 }) => {
-    const steps = [
-      { label: "打开双开抖音", action: "open_app_profile", app: "抖音", package: "com.ss.android.ugc.aweme", index: 2, wait_ms: 5000 },
-      { label: "进入消息页", action: "tap_text", package: "com.ss.android.ugc.aweme", target_text: "消息", match: "exact", wait_ms: 1500 },
-      { label: "打开指定聊天", action: "tap_text", package: "com.ss.android.ugc.aweme", target_text: contact_text, match: "contains", wait_ms: 1400 },
-      { label: "写入私信", action: "input_text", package: "com.ss.android.ugc.aweme", text, append: false, wait_ms: 500 },
-      { label: "发送私信", action: "tap_text", package: "com.ss.android.ugc.aweme", target_text: "发送", match: "exact", wait_ms: 700 }
-    ];
-    const result = await postCommand({ action: "run_sequence", device_id, steps, payload: { steps, stop_on_error: true }, stop_on_error: true });
-    const id = result?.command?.id;
-    const observed = id ? await waitCommand(id, wait_seconds) : null;
-    return textResult({ queued: result, observed_status: observed?.command || null, contact_text, sent_text: text });
+    const pkg = "com.ss.android.ugc.aweme";
+    const currentRequested = contact_text.trim().toUpperCase() === "CURRENT";
+    const runSteps = async (steps, seconds = 15) => {
+      const queued = await postCommand({ action: "run_sequence", device_id, steps, payload: { steps, stop_on_error: true }, stop_on_error: true });
+      const id = queued?.command?.id;
+      const observed = id ? await waitCommand(id, Math.min(seconds, wait_seconds)) : null;
+      const report = parsePhoneResult(observed?.command);
+      return { queued, observed_status: observed?.command || null, report };
+    };
+    const parseNodes = (run) => {
+      const step = run.report?.steps?.find((s) => s.action === "get_screen_nodes");
+      const raw = step?.detail?.result;
+      try {
+        const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
+        const nodes = Array.isArray(parsed) ? parsed : (typeof parsed?.nodes === "string" ? JSON.parse(parsed.nodes) : parsed?.nodes);
+        return Array.isArray(nodes) ? nodes : [];
+      } catch { return []; }
+    };
+    const isChat = (nodes) =>
+      nodes.some((n) => n.editable === true && Number(n.center_y) > 1500 && /消息|说话/.test(String(n.text || ""))) &&
+      nodes.some((n) => n.text === "音视频通话" && Number(n.center_y) < 400);
+    const matchesContact = (nodes) => currentRequested ||
+      nodes.some((n) => String(n.text || "") === `${contact_text}的头像` && Number(n.center_x) < 250) ||
+      nodes.some((n) => String(n.text || "") === contact_text && Number(n.center_y) < 380);
+    const preflight = await runSteps([
+      { label: "打开双开抖音并保留当前页面", action: "open_app_profile", app: "抖音", package: pkg, index: 2, wait_ms: 2800 },
+      { label: "读取当前抖音页面以选择安全导航路径", action: "get_screen_nodes", package: pkg, wait_ms: 200 }
+    ], 14);
+    let nodes = parseNodes(preflight);
+    if (preflight.observed_status?.status !== "completed" || !nodes.length) {
+      return textResult({ ok: false, reason: "cannot_inspect_douyin_page", observed_status: preflight.observed_status, safety_note: "未发送消息，无法确定当前页面。" }, true);
+    }
+    let navigated = null;
+    if (isChat(nodes)) {
+      if (!matchesContact(nodes)) {
+        return textResult({ ok: false, reason: "chat_recipient_not_verified", contact_text, safety_note: "当前在聊天页但不是可验证的目标联系人，未发送消息。" }, true);
+      }
+    } else {
+      if (currentRequested) {
+        return textResult({ ok: false, reason: "current_chat_not_open", safety_note: "CURRENT 只允许在已打开的聊天页使用，未发送消息。" }, true);
+      }
+      const onMessagesList = nodes.some((n) => n.text === "消息" && Number(n.center_y) < 450) &&
+        nodes.some((n) => String(n.text || "").includes(contact_text));
+      const steps = [
+        ...(!onMessagesList ? [{ label: "进入抖音消息页", action: "tap_text", package: pkg, target_text: "消息", match: "exact", wait_ms: 800 }] : []),
+        { label: "从聊天列表打开指定联系人", action: "tap_text", package: pkg, target_text: contact_text, match: "contains", wait_ms: 1000 },
+        { label: "检查目标聊天页", action: "get_screen_nodes", package: pkg, wait_ms: 200 }
+      ];
+      navigated = await runSteps(steps, 18);
+      nodes = parseNodes(navigated);
+      if (navigated.observed_status?.status !== "completed" || !isChat(nodes) || !matchesContact(nodes)) {
+        return textResult({ ok: false, reason: "failed_to_verify_target_chat", contact_text, observed_status: navigated.observed_status, safety_note: "未发送消息，避免发错联系人。" }, true);
+      }
+    }
+    const editor = nodes.find((n) => n.editable === true && Number(n.center_y) > 1500);
+    if (!editor) return textResult({ ok: false, reason: "input_field_missing", safety_note: "未发送消息。" }, true);
+    const x = Math.round(Number(editor.center_x));
+    const y = Math.round(Number(editor.center_y));
+    const send = await runSteps([
+      { label: "聚焦已确认的抖音消息输入框", action: "tap", package: pkg, x, y, wait_ms: 300 },
+      { label: "填写抖音私信", action: "input_text", package: pkg, text, append: false, wait_ms: 450 },
+      { label: "发送抖音私信", action: "tap_text", package: pkg, target_text: "发送", match: "exact", wait_ms: 700 }
+    ], 18);
+    const sent = send.observed_status?.status === "completed" && send.report?.ok === true && send.report?.executed === 3;
+    return textResult({ ok: sent, contact_text, sent_text: sent ? text : null, attempted_text: text, observed_status: send.observed_status, used_current_chat: !navigated, safety_note: sent ? "发送步骤已执行，请以聊天记录为准确认送达。" : "发送未确认成功，可能仍留有草稿；不要盲目重复发送。" }, !sent);
   });
-
 
   server.tool("draft_xhs_comment", "在当前小红书帖子里尝试打开评论输入框并填入评论草稿，但不点击发送。当用户说“帮我写评论/先填进去/评论草稿”或类似表达时主动调用。", {
     text: z.string(), device_id: z.string().default(DEFAULT_DEVICE), wait_seconds: z.number().int().min(5).max(30).default(18)
