@@ -6,8 +6,8 @@
     <application
         android:allowBackup="false"
         android:label="陨石边牧信使"
-        android:icon="@drawable/bridge_icon"
-        android:roundIcon="@drawable/bridge_icon"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
         android:theme="@android:style/Theme.Material.Light.NoActionBar"
         android:usesCleartextTraffic="false">
         <activity

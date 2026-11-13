@@ -58,7 +58,7 @@ public class MainActivity extends Activity {
         root.setBackgroundColor(Color.rgb(248, 250, 252));
 
         ImageView icon = new ImageView(this);
-        icon.setImageResource(R.drawable.bridge_icon);
+        icon.setImageResource(R.drawable.bridge_photo);
         icon.setScaleType(ImageView.ScaleType.CENTER_CROP);
         LinearLayout.LayoutParams ip = new LinearLayout.LayoutParams(dp(116), dp(116));
         ip.bottomMargin = dp(18);
