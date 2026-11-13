@@ -5,15 +5,24 @@ import android.service.notification.StatusBarNotification;
 
 /** 通知使用权开启后，同步媒体通知给 MediaState。 */
 public class MediaNotificationService extends NotificationListenerService {
+    private static volatile MediaNotificationService instance;
+    public static MediaNotificationService getInstance() { return instance; }
     @Override public void onListenerConnected() {
         super.onListenerConnected();
+        instance = this;
         refreshMediaState("媒体通知监听已连接");
     }
 
     @Override public void onNotificationPosted(StatusBarNotification sbn) {
         super.onNotificationPosted(sbn);
         try { WalletState.captureNotification(this, sbn); } catch (Exception ignored) { }
+        try { WeChatNotificationBridge.capture(this, sbn); } catch (Exception ignored) { }
         refreshMediaState(null);
+    }
+
+    @Override public void onDestroy() {
+        if (instance == this) instance = null;
+        super.onDestroy();
     }
 
     @Override public void onNotificationRemoved(StatusBarNotification sbn) {
