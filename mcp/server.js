@@ -1577,6 +1577,35 @@ function makeServer({ allowedToolNames = null, principal = {} } = {}) {
         safety_note: "只展开并读取系统通知栏节点，不打开微信、不点击通知、不发送消息。"
       });
     }
+    if (/^SYSTEMUI_OPEN$/i.test(specialMode)) {
+      const steps = [
+        { label: "展开系统通知栏", action: "notifications", wait_ms: 1200 },
+        { label: "读取当前 SystemUI 节点", action: "get_screen_nodes", package: "com.android.systemui", wait_ms: 800 }
+      ];
+      const result = await postCommand({ action: "run_sequence", device_id, steps, payload: { steps, stop_on_error: false }, stop_on_error: false });
+      const id = result?.command?.id;
+      const observed = id ? await waitCommand(id, Math.min(wait_seconds, 25)) : null;
+      return textResult({
+        queued: result,
+        observed_status: observed?.command || null,
+        mode: "systemui_open",
+        safety_note: "只展开通知栏并读取节点，保持通知栏打开；不点击通知、不打开微信、不发送消息。"
+      });
+    }
+    if (/^SYSTEMUI_CURRENT$/i.test(specialMode)) {
+      const steps = [
+        { label: "读取当前 SystemUI 节点", action: "get_screen_nodes", package: "com.android.systemui", wait_ms: 700 }
+      ];
+      const result = await postCommand({ action: "run_sequence", device_id, steps, payload: { steps, stop_on_error: false }, stop_on_error: false });
+      const id = result?.command?.id;
+      const observed = id ? await waitCommand(id, Math.min(wait_seconds, 20)) : null;
+      return textResult({
+        queued: result,
+        observed_status: observed?.command || null,
+        mode: "systemui_current",
+        safety_note: "只读取当前 SystemUI 节点；不点击、不输入、不发送。"
+      });
+    }
     if (/^SYSTEMUI_REPLY_PROBE$/i.test(specialMode)) {
       const steps = [
         { label: "展开系统通知栏", action: "notifications", wait_ms: 1200 },
