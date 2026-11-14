@@ -335,7 +335,10 @@ public class CompanionService extends Service {
             if ("reply_wechat_clone_notification".equals(action)) {
                 String eventId = cmd.optString("event_id", cmd.optString("message_id", "LATEST"));
                 String replyText = cmd.optString("text", cmd.optString("reply_text", ""));
-                JSONObject rr = WeChatAccessibilityBridge.reply(ctx, eventId, replyText);
+                JSONObject rr = SystemUiWeChatBridge.reply(ctx, eventId, replyText);
+                if (!rr.optBoolean("ok", false)) {
+                    rr = WeChatAccessibilityBridge.reply(ctx, eventId, replyText);
+                }
                 if (!rr.optBoolean("ok", false)) {
                     MediaNotificationService notificationService = MediaNotificationService.getInstance();
                     if (notificationService != null) {
