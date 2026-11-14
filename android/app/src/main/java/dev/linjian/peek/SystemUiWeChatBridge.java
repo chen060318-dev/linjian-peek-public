@@ -25,6 +25,7 @@ public final class SystemUiWeChatBridge {
     private static final String SYSTEMUI = "com.android.systemui";
     private static final String CLONE_MARKER = "克隆";
     private static final long DEDUPE_MS = 2500L;
+    private static volatile long lastScanAt = 0L;
     private static final Map<String, Long> RECENT = new HashMap<>();
     private static final Map<String, EventMeta> EVENTS = new HashMap<>();
     private static volatile String latestEventId = "";
@@ -40,10 +41,10 @@ public final class SystemUiWeChatBridge {
 
     public static void capture(Context ctx, AccessibilityEvent event) {
         if (ctx == null || event == null) return;
-        CharSequence pkg = event.getPackageName();
-        if (pkg == null || !SYSTEMUI.contentEquals(pkg)) return;
-
         try {
+            long now = System.currentTimeMillis();
+            if (now - lastScanAt < 250L) return;
+            lastScanAt = now;
             ScreenshotService svc = ScreenshotService.getInstance();
             if (svc == null) return;
             NotificationCard card = findCloneCard(svc, "");

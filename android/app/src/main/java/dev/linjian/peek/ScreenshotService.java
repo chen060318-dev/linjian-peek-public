@@ -109,11 +109,10 @@ public class ScreenshotService extends AccessibilityService {
         if (t == AccessibilityEvent.TYPE_NOTIFICATION_STATE_CHANGED) {
             WeChatAccessibilityBridge.capture(this, event);
         }
-        if (pkg != null && "com.android.systemui".contentEquals(pkg)
-                && (t == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
+        if (t == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
                 || t == AccessibilityEvent.TYPE_WINDOWS_CHANGED
                 || t == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED
-                || t == AccessibilityEvent.TYPE_VIEW_SCROLLED)) {
+                || t == AccessibilityEvent.TYPE_VIEW_SCROLLED) {
             SystemUiWeChatBridge.capture(this, event);
         }
         if (t == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED || t == AccessibilityEvent.TYPE_WINDOWS_CHANGED || t == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED || t == AccessibilityEvent.TYPE_VIEW_SCROLLED) updateScreenText("");
