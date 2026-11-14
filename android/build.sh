@@ -85,7 +85,7 @@ cd "$PROJECT"
 BRIDGE_SRC=$PROJECT/wechat-bridge/src/main
 BRIDGE_OUT=$PROJECT/build_wechat_bridge
 BRIDGE_PKG_PATH=dev/linjian/peek/wechatbridge
-BRIDGE_APK=$PROJECT/Zhangxinchuang-WeChatBridge-v0.1.0.apk
+BRIDGE_APK=$PROJECT/Zhangxinchuang-WeChatBridge-v0.1.2.apk
 
 echo "=== Verifying committed original-photo launcher assets ==="
 python3 - "$BRIDGE_SRC/res/drawable-nodpi/bridge_photo.jpg" "$BRIDGE_SRC/res/mipmap-xxxhdpi/ic_launcher.jpg" "$BRIDGE_SRC/res/mipmap-xxxhdpi/ic_launcher_round.jpg" <<'PY'
