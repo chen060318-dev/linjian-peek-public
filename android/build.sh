@@ -85,7 +85,7 @@ cd "$PROJECT"
 BRIDGE_SRC=$PROJECT/wechat-bridge/src/main
 BRIDGE_OUT=$PROJECT/build_wechat_bridge
 BRIDGE_PKG_PATH=dev/linjian/peek/wechatbridge
-BRIDGE_APK=$PROJECT/Zhangxinchuang-WeChatBridge-v0.1.3.apk
+BRIDGE_APK=$PROJECT/Zhangxinchuang-WeChatBridge-v0.1.4.apk
 BRIDGE_ICON_B64=$PROJECT/wechat-bridge/icon_final.b64
 
 echo "=== Restoring final launcher photo from checked-in base64 ==="
