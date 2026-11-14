@@ -1577,6 +1577,23 @@ function makeServer({ allowedToolNames = null, principal = {} } = {}) {
         safety_note: "只展开并读取系统通知栏节点，不打开微信、不点击通知、不发送消息。"
       });
     }
+    if (/^SYSTEMUI_REPLY_PROBE$/i.test(specialMode)) {
+      const steps = [
+        { label: "展开系统通知栏", action: "notifications", wait_ms: 1200 },
+        { label: "展开克隆微信通知卡", action: "tap_text", package: "com.android.systemui", target_text: "展开", match: "exact", index: 2, wait_ms: 900 },
+        { label: "读取展开后的通知节点", action: "get_screen_nodes", package: "com.android.systemui", wait_ms: 900 },
+        { label: "收起通知栏", action: "back", wait_ms: 500 }
+      ];
+      const result = await postCommand({ action: "run_sequence", device_id, steps, payload: { steps, stop_on_error: false }, stop_on_error: false });
+      const id = result?.command?.id;
+      const observed = id ? await waitCommand(id, Math.min(wait_seconds, 25)) : null;
+      return textResult({
+        queued: result,
+        observed_status: observed?.command || null,
+        mode: "systemui_reply_probe",
+        safety_note: "只展开克隆微信通知卡并读取节点；不点击通知正文、不打开微信、不发送消息。"
+      });
+    }
     const steps = [
       { label: "打开双开微信", action: "open_app_profile", app: "微信", package: "com.tencent.mm", index: 2, wait_ms: 5000 },
       { label: "进入微信聊天页", action: "tap_text", package: "com.tencent.mm", target_text: "微信", match: "exact", wait_ms: 1500 },
