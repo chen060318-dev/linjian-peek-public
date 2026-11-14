@@ -1580,7 +1580,7 @@ function makeServer({ allowedToolNames = null, principal = {} } = {}) {
     if (/^SYSTEMUI_REPLY_PROBE$/i.test(specialMode)) {
       const steps = [
         { label: "展开系统通知栏", action: "notifications", wait_ms: 1200 },
-        { label: "展开克隆微信通知卡", action: "tap_text", package: "com.android.systemui", target_text: "展开", match: "exact", index: 2, wait_ms: 900 },
+        { label: "展开克隆微信通知卡", action: "tap_text", package: "com.android.systemui", target_text: "展开", match: "exact", index: 3, wait_ms: 900 },
         { label: "读取展开后的通知节点", action: "get_screen_nodes", package: "com.android.systemui", wait_ms: 900 },
         { label: "收起通知栏", action: "back", wait_ms: 500 }
       ];
