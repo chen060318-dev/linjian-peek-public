@@ -333,16 +333,14 @@ public class CompanionService extends Service {
                 return;
             }
             if ("reply_wechat_clone_notification".equals(action)) {
-                MediaNotificationService notificationService = MediaNotificationService.getInstance();
-                JSONObject rr;
-                if (notificationService == null) {
-                    rr = new JSONObject();
-                    rr.put("ok", false);
-                    rr.put("error", "notification_listener_not_connected");
-                } else {
-                    String eventId = cmd.optString("event_id", cmd.optString("message_id", "LATEST"));
-                    String replyText = cmd.optString("text", cmd.optString("reply_text", ""));
-                    rr = WeChatNotificationBridge.reply(notificationService, eventId, replyText);
+                String eventId = cmd.optString("event_id", cmd.optString("message_id", "LATEST"));
+                String replyText = cmd.optString("text", cmd.optString("reply_text", ""));
+                JSONObject rr = WeChatAccessibilityBridge.reply(ctx, eventId, replyText);
+                if (!rr.optBoolean("ok", false)) {
+                    MediaNotificationService notificationService = MediaNotificationService.getInstance();
+                    if (notificationService != null) {
+                        rr = WeChatNotificationBridge.reply(notificationService, eventId, replyText);
+                    }
                 }
                 boolean ok = rr.optBoolean("ok", false);
                 String result = rr.toString();

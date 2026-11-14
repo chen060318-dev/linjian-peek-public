@@ -513,6 +513,29 @@ class Handler(BaseHTTPRequestHandler):
         # 所有 /api/* 入口统一先验证手机同步 Token，防止新增路由漏掉单独检查。
         if path.startswith("/api/") and not self._require_token():
             return
+        if path == "/api/wechat-bridge/event-from-device":
+            data = self._read_json()
+            if int(data.get("user_id") or -1) != 999:
+                self._json(403, {"ok": False, "error": "clone_user_not_allowed"}); return
+            event_id = clip_text(str(data.get("id") or ""), 120)
+            if not event_id:
+                self._json(400, {"ok": False, "error": "event_id_required"}); return
+            event = {
+                "id": event_id,
+                "device_id": clip_text(str(data.get("device_id") or DEFAULT_DEVICE), 80),
+                "sender": clip_text(str(data.get("sender") or ""), 160),
+                "text": clip_text(str(data.get("text") or ""), 1200),
+                "notification_key": clip_text(str(data.get("notification_key") or ""), 300),
+                "posted_at_ms": int(data.get("posted_at_ms") or 0),
+                "received_at_ms": int(time.time() * 1000),
+                "can_inline_reply": bool(data.get("can_inline_reply")),
+                "source": "main_accessibility",
+                "user_id": 999,
+            }
+            with self.state.wechat_bridge_lock:
+                self.state.wechat_bridge_events = [event] + [x for x in self.state.wechat_bridge_events if x.get("id") != event_id]
+                del self.state.wechat_bridge_events[50:]
+            self._json(200, {"ok": True, "event_id": event_id, "mode": "main_accessibility"}); return
         if path in ("/mcp", "/sse"):
             self._json(400, {"ok": False, "error": "LINJIAN_ERR_WRONG_SERVICE", "message": "你访问的是掌心窗 server 服务，不是 MCP 服务。请单独部署 mcp 目录，并在 MCP 客户端填写 MCP 服务域名 + /mcp 或 /sse。"})
             return

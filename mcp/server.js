@@ -1558,7 +1558,7 @@ function makeServer({ allowedToolNames = null, principal = {} } = {}) {
       return textResult({
         ...bridge,
         mode: "wechat_side_bridge_inbox",
-        safety_note: "消息来自安装在双开空间内的陨石边牧信使；主空间微信不经过这条桥。"
+        safety_note: "消息由主空间掌心窗无障碍监听通知事件，仅接受 PendingIntent 创建用户为 999 的双开微信；主微信不进入此消息箱。"
       });
     }
     const steps = [
@@ -1751,17 +1751,22 @@ function makeServer({ allowedToolNames = null, principal = {} } = {}) {
     const backgroundMatch = String(contact_text || "").trim().match(/^BACKGROUND_EVENT(?::(.+))?$/i);
     if (backgroundMatch) {
       const eventId = (backgroundMatch[1] || "LATEST").trim() || "LATEST";
-      const queued = await linjianFetch("/api/wechat-bridge/reply", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ event_id: eventId, text })
-      }).then((r) => r.json());
+      const result = await postCommand({
+        action: "reply_wechat_clone_notification",
+        device_id,
+        event_id: eventId,
+        text,
+        payload: { event_id: eventId, text }
+      });
+      const id = result?.command?.id;
+      const observed = id ? await waitCommand(id, Math.min(wait_seconds, 18)) : null;
       return textResult({
-        ...queued,
+        queued: result,
+        observed_status: observed?.command || null,
         contact_text: "BACKGROUND_EVENT:" + eventId,
         sent_text: text,
-        mode: "wechat_side_bridge_remote_input",
-        safety_note: "回复只投递给已配对的双开空间陨石边牧信使，由该空间微信通知的 RemoteInput 发送。"
+        mode: "wechat_main_accessibility_remote_input",
+        safety_note: "后台回复走掌心窗已授权的无障碍通知事件缓存，只接受 UserHandle{999} 双开微信。"
       });
     }
     const label = wechatContactLabel(contact_text);
