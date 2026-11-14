@@ -43,15 +43,14 @@ public final class SystemUiWeChatBridge {
         CharSequence pkg = event.getPackageName();
         if (pkg == null || !SYSTEMUI.contentEquals(pkg)) return;
 
-        AccessibilityNodeInfo source = null;
         try {
-            source = event.getSource();
-            NotificationCard card = findCloneCardFromSource(source);
+            ScreenshotService svc = ScreenshotService.getInstance();
+            if (svc == null) return;
+            NotificationCard card = findCloneCard(svc, "");
             if (card == null || card.message.isEmpty()) return;
             emit(ctx, card.sender, card.message);
+            recycle(card);
         } catch (Exception ignored) {
-        } finally {
-            try { if (source != null) source.recycle(); } catch (Exception ignored) {}
         }
     }
 
@@ -242,8 +241,17 @@ public final class SystemUiWeChatBridge {
         List<AccessibilityNodeInfo> roots = systemUiRoots(svc);
         try {
             for (AccessibilityNodeInfo root : roots) {
-                NotificationCard card = findCloneCardRecursive(root, sender, 0);
-                if (card != null) return card;
+                AccessibilityNodeInfo marker = findCloneMarker(root, 0);
+                while (marker != null) {
+                    NotificationCard card = cardFromMarker(marker, sender);
+                    if (card != null) {
+                        try { marker.recycle(); } catch (Exception ignored) {}
+                        return card;
+                    }
+                    AccessibilityNodeInfo next = findNextCloneMarker(root, marker);
+                    try { marker.recycle(); } catch (Exception ignored) {}
+                    marker = next;
+                }
             }
         } finally {
             for (AccessibilityNodeInfo r : roots) try { r.recycle(); } catch (Exception ignored) {}
@@ -251,17 +259,72 @@ public final class SystemUiWeChatBridge {
         return null;
     }
 
-    private static NotificationCard findCloneCardRecursive(AccessibilityNodeInfo node, String sender, int depth) {
-        if (node == null || depth > 12) return null;
-        String all = collectText(node, 0, new StringBuilder()).toString();
-        if (all.contains(CLONE_MARKER) && (sender == null || sender.isEmpty() || all.contains(sender))) {
-            return parseCard(AccessibilityNodeInfo.obtain(node));
+    private static AccessibilityNodeInfo findCloneMarker(AccessibilityNodeInfo node, int depth) {
+        if (node == null || depth > 16) return null;
+        if (CLONE_MARKER.equals(nodeText(node))) return AccessibilityNodeInfo.obtain(node);
+        for (int i = 0; i < node.getChildCount(); i++) {
+            AccessibilityNodeInfo c = node.getChild(i);
+            AccessibilityNodeInfo hit = findCloneMarker(c, depth + 1);
+            try { if (c != null) c.recycle(); } catch (Exception ignored) {}
+            if (hit != null) return hit;
+        }
+        return null;
+    }
+
+    private static AccessibilityNodeInfo findNextCloneMarker(AccessibilityNodeInfo root, AccessibilityNodeInfo previous) {
+        final int prevWindow = previous == null ? -1 : previous.getWindowId();
+        final android.graphics.Rect prevRect = new android.graphics.Rect();
+        if (previous != null) previous.getBoundsInScreen(prevRect);
+        return findCloneMarkerAfter(root, 0, prevWindow, prevRect.top, prevRect.left);
+    }
+
+    private static AccessibilityNodeInfo findCloneMarkerAfter(AccessibilityNodeInfo node, int depth, int windowId, int top, int left) {
+        if (node == null || depth > 16) return null;
+        if (CLONE_MARKER.equals(nodeText(node))) {
+            android.graphics.Rect r = new android.graphics.Rect();
+            node.getBoundsInScreen(r);
+            boolean after = node.getWindowId() != windowId || r.top > top || (r.top == top && r.left > left);
+            if (after) return AccessibilityNodeInfo.obtain(node);
         }
         for (int i = 0; i < node.getChildCount(); i++) {
-            AccessibilityNodeInfo child = node.getChild(i);
-            NotificationCard hit = findCloneCardRecursive(child, sender, depth + 1);
-            try { if (child != null) child.recycle(); } catch (Exception ignored) {}
+            AccessibilityNodeInfo c = node.getChild(i);
+            AccessibilityNodeInfo hit = findCloneMarkerAfter(c, depth + 1, windowId, top, left);
+            try { if (c != null) c.recycle(); } catch (Exception ignored) {}
             if (hit != null) return hit;
+        }
+        return null;
+    }
+
+    private static NotificationCard cardFromMarker(AccessibilityNodeInfo marker, String wantedSender) {
+        if (marker == null) return null;
+        AccessibilityNodeInfo cur = AccessibilityNodeInfo.obtain(marker);
+        for (int up = 0; cur != null && up < 7; up++) {
+            List<String> texts = new ArrayList<>();
+            collectStrings(cur, texts, 0);
+            String sender = "";
+            String message = "";
+            boolean hasExpand = false;
+            for (String t : texts) {
+                if ("展开".equals(t)) hasExpand = true;
+                if (t.matches("^\\[\\d+条\\].+?:\\s*.*$") || t.matches("^.+?:\\s*.+$")) {
+                    message = t;
+                    String body = t.replaceFirst("^\\[\\d+条\\]", "");
+                    int colon = body.indexOf(":");
+                    if (colon > 0) sender = body.substring(0, colon).trim();
+                }
+            }
+            boolean senderOk = wantedSender == null || wantedSender.isEmpty()
+                    || sender.equals(wantedSender) || collectText(cur, 0, new StringBuilder()).toString().contains(wantedSender);
+            if (hasExpand && !message.isEmpty() && senderOk) {
+                NotificationCard card = parseCard(AccessibilityNodeInfo.obtain(cur));
+                if (!sender.isEmpty()) card.sender = sender;
+                card.message = message;
+                try { cur.recycle(); } catch (Exception ignored) {}
+                return card;
+            }
+            AccessibilityNodeInfo p = cur.getParent();
+            try { cur.recycle(); } catch (Exception ignored) {}
+            cur = p;
         }
         return null;
     }
