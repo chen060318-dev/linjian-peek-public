@@ -1,17 +1,11 @@
 package dev.linjian.peek.wechatbridge;
 
-import android.Manifest;
 import android.app.Activity;
-import android.app.NotificationManager;
 import android.content.ComponentName;
 import android.content.Intent;
 import android.content.SharedPreferences;
-import android.content.pm.PackageManager;
 import android.graphics.Color;
-import android.os.Build;
 import android.os.Bundle;
-import android.os.Process;
-import android.os.UserManager;
 import android.provider.Settings;
 import android.text.InputType;
 import android.view.Gravity;
@@ -39,14 +33,11 @@ public class MainActivity extends Activity {
     static final String KEY_TOKEN = "bridge_token";
     static final String KEY_SERVER = "server_url";
     static final String DEFAULT_SERVER = "https://zhangxinchuang-server-gi8r.onrender.com";
-    private static final int REQ_POST_NOTIFICATIONS = 1001;
 
     private final ExecutorService io = Executors.newSingleThreadExecutor();
     private TextView status;
     private EditText codeInput;
     private Button pairButton;
-    private Button notifyPermissionButton;
-    private Button listenerButton;
 
     private int dp(int v) {
         return Math.round(v * getResources().getDisplayMetrics().density);
@@ -81,7 +72,7 @@ public class MainActivity extends Activity {
         tp.bottomMargin = dp(8);
         root.addView(title, tp);
 
-        TextView sub = text("主空间监听微信通知 · 后台收信与回复", 14, Color.rgb(105, 121, 139));
+        TextView sub = text("User 999 双开微信 · 通知事件桥", 14, Color.rgb(105, 121, 139));
         sub.setGravity(Gravity.CENTER);
         LinearLayout.LayoutParams sp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         sp.bottomMargin = dp(22);
@@ -111,24 +102,23 @@ public class MainActivity extends Activity {
         bp.bottomMargin = dp(10);
         root.addView(pairButton, bp);
 
-        notifyPermissionButton = new Button(this);
-        notifyPermissionButton.setText("允许本应用通知");
-        notifyPermissionButton.setOnClickListener(v -> requestPostNotifications());
-        LinearLayout.LayoutParams pp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(52));
-        pp.bottomMargin = dp(10);
-        root.addView(notifyPermissionButton, pp);
-
-        listenerButton = new Button(this);
-        listenerButton.setText("打开通知使用权列表");
-        listenerButton.setOnClickListener(v -> openNotificationAccess());
-        LinearLayout.LayoutParams np = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(52));
-        np.bottomMargin = dp(18);
-        root.addView(listenerButton, np);
+        Button accessibility = new Button(this);
+        accessibility.setText("开启通知事件桥");
+        accessibility.setOnClickListener(v -> {
+            try {
+                startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS));
+            } catch (Throwable e) {
+                status.setText("系统没有打开无障碍设置页");
+            }
+        });
+        LinearLayout.LayoutParams ap = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(52));
+        ap.bottomMargin = dp(18);
+        root.addView(accessibility, ap);
 
         TextView foot = text(
-                "两个权限不是一回事：\n" +
-                "“允许本应用通知”是普通通知权限；“通知使用权”才负责读取微信通知。\n" +
-                "小桥保持主空间安装即可。",
+                "这一版不再使用“通知使用权”。\n" +
+                "只订阅微信的通知变化事件，并且只接受 PendingIntent 创建用户为 999 的双开微信。\n" +
+                "不读屏、不自动点按主微信。",
                 13, Color.rgb(120, 132, 145));
         foot.setGravity(Gravity.CENTER);
         root.addView(foot, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
@@ -142,98 +132,32 @@ public class MainActivity extends Activity {
         if (status != null) refreshStatus();
     }
 
-    @Override public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
-        if (requestCode == REQ_POST_NOTIFICATIONS) refreshStatus();
+    private ComponentName accessibilityComponent() {
+        return new ComponentName(this, BridgeAccessibilityService.class);
     }
 
-    private ComponentName listenerComponent() {
-        return new ComponentName(this, BridgeNotificationService.class);
-    }
-
-    private boolean isManagedProfile() {
+    private boolean isAccessibilityEnabled() {
         try {
-            UserManager um = (UserManager) getSystemService(USER_SERVICE);
-            return um != null && Build.VERSION.SDK_INT >= 24 && um.isManagedProfile();
-        } catch (Throwable ignored) {
-            return false;
-        }
-    }
-
-    private boolean hasPostNotifications() {
-        if (Build.VERSION.SDK_INT < 33) return true;
-        return checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED;
-    }
-
-    private void requestPostNotifications() {
-        if (Build.VERSION.SDK_INT >= 33 && !hasPostNotifications()) {
-            requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, REQ_POST_NOTIFICATIONS);
-        } else {
-            status.setText("普通通知权限已经开启");
-        }
-    }
-
-    private boolean hasListenerAccess() {
-        try {
-            if (Build.VERSION.SDK_INT >= 27) {
-                NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
-                return nm != null && nm.isNotificationListenerAccessGranted(listenerComponent());
+            String enabled = Settings.Secure.getString(getContentResolver(), Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES);
+            if (enabled == null || enabled.isEmpty()) return false;
+            String wanted = accessibilityComponent().flattenToString();
+            for (String item : enabled.split(":")) {
+                if (wanted.equalsIgnoreCase(item)) return true;
             }
-            String flat = Settings.Secure.getString(getContentResolver(), "enabled_notification_listeners");
-            return flat != null && flat.contains(listenerComponent().flattenToString());
-        } catch (Throwable ignored) {
-            return false;
-        }
-    }
-
-    private void openNotificationAccess() {
-        if (isManagedProfile()) {
-            status.setText("当前位于双开/工作空间，这里无法开启通知使用权。");
-            return;
-        }
-        try {
-            startActivity(new Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS));
-        } catch (Throwable first) {
-            try {
-                Intent fallback = new Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS");
-                startActivity(fallback);
-            } catch (Throwable second) {
-                status.setText("HyperOS 没有响应通知使用权入口，请从系统设置搜索“通知使用权”。");
-            }
-        }
+        } catch (Throwable ignored) {}
+        return false;
     }
 
     private void refreshStatus() {
         SharedPreferences p = getSharedPreferences(PREFS, MODE_PRIVATE);
         boolean paired = !p.getString(KEY_TOKEN, "").isEmpty();
-        boolean managed = isManagedProfile();
-        boolean listener = !managed && hasListenerAccess();
-        boolean post = hasPostNotifications();
-        int userHash;
-        try { userHash = Process.myUserHandle().hashCode(); } catch (Throwable e) { userHash = Integer.MIN_VALUE; }
-
-        if (managed) {
-            status.setText("检测到双开/工作空间 · 请回主空间使用");
-        } else {
-            status.setText(
-                    (paired ? "已配对" : "未配对") +
-                    " · 主空间" +
-                    " · 普通通知" + (post ? "已允许" : "未允许") +
-                    " · 通知使用权" + (listener ? "已开启" : "未开启") +
-                    " · user hash: " + userHash);
-        }
-
+        boolean a11y = isAccessibilityEnabled();
+        status.setText((paired ? "已配对" : "未配对") + " · 通知事件桥" + (a11y ? "已开启" : "未开启"));
         codeInput.setVisibility(paired ? View.GONE : View.VISIBLE);
         pairButton.setVisibility(paired ? View.GONE : View.VISIBLE);
-        notifyPermissionButton.setEnabled(!managed);
-        listenerButton.setEnabled(!managed);
     }
 
     private void pair() {
-        if (isManagedProfile()) {
-            status.setText("先回主空间再配对");
-            return;
-        }
         final String code = codeInput.getText().toString().trim();
         if (!code.matches("\\d{6}")) {
             status.setText("先输入我这边生成的 6 位配对码");

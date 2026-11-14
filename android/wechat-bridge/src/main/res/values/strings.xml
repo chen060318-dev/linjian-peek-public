@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="bridge_accessibility_desc">只接收微信通知变化事件，并仅处理 User 999 双开微信通知；不读屏、不执行手势。</string>
+</resources>
