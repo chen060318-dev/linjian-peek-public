@@ -450,6 +450,7 @@ public class CompanionService extends Service {
                 if (pkg == null || pkg.length() == 0) pkg = AppPrefs.packageForApp(ctx, app);
                 result = openPackageResult(ctx, pkg);
                 ok = result.startsWith("opened_");
+            } else if ("notifications".equals(action) || "expand_notifications".equals(action)) { ok = svc != null && svc.doNotifications(); result = ok ? "notifications" : "notifications_failed_or_accessibility_missing";
             } else if ("home".equals(action)) { ok = svc != null && svc.doHome(); result = ok ? "home" : "home_failed_or_accessibility_missing";
             } else if ("back".equals(action)) { ok = svc != null && svc.doBack(); result = ok ? "back" : "back_failed_or_accessibility_missing";
             } else if ("recents".equals(action)) { ok = svc != null && svc.doRecents(); result = ok ? "recents" : "recents_failed_or_accessibility_missing";

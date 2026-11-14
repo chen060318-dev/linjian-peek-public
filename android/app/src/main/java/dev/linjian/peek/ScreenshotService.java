@@ -410,6 +410,7 @@ public class ScreenshotService extends AccessibilityService {
 
     public boolean doBack() { return performGlobalAction(GLOBAL_ACTION_BACK); }
     public boolean doHome() { return performGlobalAction(GLOBAL_ACTION_HOME); }
+    public boolean doNotifications() { return performGlobalAction(GLOBAL_ACTION_NOTIFICATIONS); }
     public boolean doRecents() { return performGlobalAction(GLOBAL_ACTION_RECENTS); }
     public boolean doLockScreen() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) return false;

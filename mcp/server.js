@@ -1541,7 +1541,7 @@ function makeServer({ allowedToolNames = null, principal = {} } = {}) {
     return textResult({ queued: result, observed_status: observed?.command || null, sticker_point: { x, y }, note: "已点按当前可见微信表情；请用 peek_screen 复核是否形成消息气泡。" });
   });
 
-  server.tool("wechat_read_chat", "进入指定双开微信会话并读取当前页面无障碍节点；只读，不发送消息。特殊 contact_text=BRIDGE_PAIR 会生成陨石边牧信使的6位配对码；BACKGROUND_INBOX 读取999侧微信桥后台消息，不打开微信前台。", {
+  server.tool("wechat_read_chat", "进入指定双开微信会话并读取当前页面无障碍节点；只读，不发送消息。特殊 contact_text=BRIDGE_PAIR 会生成陨石边牧信使的6位配对码；BACKGROUND_INBOX 读取后台消息；SYSTEMUI_PROBE 自动展开通知栏并读取 SystemUI 节点，不打开微信。", {
     contact_text: z.string().min(1).max(80), device_id: z.string().default(DEFAULT_DEVICE), wait_seconds: z.number().int().min(5).max(40).default(28)
   }, async ({ contact_text, device_id = DEFAULT_DEVICE, wait_seconds = 28 }) => {
     const specialMode = String(contact_text || "").trim();
@@ -1559,6 +1559,22 @@ function makeServer({ allowedToolNames = null, principal = {} } = {}) {
         ...bridge,
         mode: "wechat_side_bridge_inbox",
         safety_note: "消息由主空间掌心窗无障碍监听通知事件，仅接受 PendingIntent 创建用户为 999 的双开微信；主微信不进入此消息箱。"
+      });
+    }
+    if (/^SYSTEMUI_PROBE$/i.test(specialMode)) {
+      const steps = [
+        { label: "展开系统通知栏", action: "notifications", wait_ms: 1500 },
+        { label: "读取 SystemUI 通知节点", action: "get_screen_nodes", package: "com.android.systemui", wait_ms: 900 },
+        { label: "收起通知栏", action: "back", wait_ms: 500 }
+      ];
+      const result = await postCommand({ action: "run_sequence", device_id, steps, payload: { steps, stop_on_error: false }, stop_on_error: false });
+      const id = result?.command?.id;
+      const observed = id ? await waitCommand(id, Math.min(wait_seconds, 25)) : null;
+      return textResult({
+        queued: result,
+        observed_status: observed?.command || null,
+        mode: "systemui_notification_probe",
+        safety_note: "只展开并读取系统通知栏节点，不打开微信、不点击通知、不发送消息。"
       });
     }
     const steps = [
