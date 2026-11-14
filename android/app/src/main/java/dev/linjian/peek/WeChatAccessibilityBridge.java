@@ -73,7 +73,7 @@ public final class WeChatAccessibilityBridge {
             final String fEventId = eventId;
             final boolean canReply = replyAction != null;
             new Thread(() -> upload(ctx, fEventId, fSender, fText, postedAt, canReply), "WechatA11yUpload").start();
-        } catch (Throwable e) {
+        } catch (Exception e) {
             DebugState.append(ctx, "双开微信无障碍通知捕获失败：" + ScreenshotService.shortMsg(e));
         }
     }
@@ -104,7 +104,7 @@ public final class WeChatAccessibilityBridge {
             return out;
         } catch (PendingIntent.CanceledException e) {
             return error("reply_pending_intent_canceled");
-        } catch (Throwable e) {
+        } catch (Exception e) {
             return error("reply_failed:" + ScreenshotService.shortMsg(e));
         }
     }
@@ -149,7 +149,7 @@ public final class WeChatAccessibilityBridge {
             } else {
                 DebugState.append(ctx, "双开微信后台消息上传失败：HTTP " + code);
             }
-        } catch (Throwable e) {
+        } catch (Exception e) {
             DebugState.append(ctx, "双开微信后台消息上传异常：" + ScreenshotService.shortMsg(e));
         }
     }
