@@ -86,6 +86,23 @@ BRIDGE_SRC=$PROJECT/wechat-bridge/src/main
 BRIDGE_OUT=$PROJECT/build_wechat_bridge
 BRIDGE_PKG_PATH=dev/linjian/peek/wechatbridge
 BRIDGE_APK=$PROJECT/Zhangxinchuang-WeChatBridge-v0.1.2.apk
+BRIDGE_ICON_B64=$PROJECT/wechat-bridge/icon_final.b64
+
+echo "=== Restoring final launcher photo from checked-in base64 ==="
+python3 - "$BRIDGE_ICON_B64" "$BRIDGE_SRC/res/drawable-nodpi/bridge_photo.jpg" "$BRIDGE_SRC/res/mipmap-xxxhdpi/ic_launcher.jpg" "$BRIDGE_SRC/res/mipmap-xxxhdpi/ic_launcher_round.jpg" <<'PY'
+import base64, sys
+src, *dsts = sys.argv[1:]
+payload = open(src, "rb").read().strip()
+data = base64.b64decode(payload, validate=True)
+if len(data) < 800:
+    raise SystemExit(f"Decoded icon too small: {len(data)} bytes")
+if not (data.startswith(b"\xff\xd8") and data.endswith(b"\xff\xd9")):
+    raise SystemExit("Decoded icon is not a valid JPEG")
+for dst in dsts:
+    with open(dst, "wb") as fh:
+        fh.write(data)
+    print(f"restored JPEG: {dst} ({len(data)} bytes)")
+PY
 
 echo "=== Verifying committed original-photo launcher assets ==="
 python3 - "$BRIDGE_SRC/res/drawable-nodpi/bridge_photo.jpg" "$BRIDGE_SRC/res/mipmap-xxxhdpi/ic_launcher.jpg" "$BRIDGE_SRC/res/mipmap-xxxhdpi/ic_launcher_round.jpg" <<'PY'
