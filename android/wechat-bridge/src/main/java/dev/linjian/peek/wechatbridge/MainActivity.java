@@ -1,11 +1,15 @@
 package dev.linjian.peek.wechatbridge;
 
 import android.app.Activity;
+import android.app.NotificationManager;
+import android.content.ComponentName;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.graphics.Color;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Process;
+import android.os.UserManager;
 import android.provider.Settings;
 import android.text.InputType;
 import android.view.Gravity;
@@ -36,6 +40,7 @@ public class MainActivity extends Activity {
     private final ExecutorService io = Executors.newSingleThreadExecutor();
     private TextView status;
     private EditText codeInput;
+    private Button notifyButton;
 
     private int dp(int v) {
         return Math.round(v * getResources().getDisplayMetrics().density);
@@ -70,7 +75,7 @@ public class MainActivity extends Activity {
         tp.bottomMargin = dp(8);
         root.addView(title, tp);
 
-        TextView sub = text("只负责双开微信的后台收信与回复", 14, Color.rgb(105, 121, 139));
+        TextView sub = text("主空间监听双开微信通知 · 后台收信与回复", 14, Color.rgb(105, 121, 139));
         sub.setGravity(Gravity.CENTER);
         LinearLayout.LayoutParams sp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         sp.bottomMargin = dp(22);
@@ -100,14 +105,17 @@ public class MainActivity extends Activity {
         bp.bottomMargin = dp(10);
         root.addView(pair, bp);
 
-        Button notify = new Button(this);
-        notify.setText("打开通知使用权");
-        notify.setOnClickListener(v -> startActivity(new Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)));
+        notifyButton = new Button(this);
+        notifyButton.setText("打开本应用的通知使用权");
+        notifyButton.setOnClickListener(v -> openNotificationAccess());
         LinearLayout.LayoutParams np = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(52));
         np.bottomMargin = dp(18);
-        root.addView(notify, np);
+        root.addView(notifyButton, np);
 
-        TextView foot = text("请把这个小桥放在双开空间里使用。\n它只监听当前空间的微信通知，不读取主空间微信。", 13, Color.rgb(120, 132, 145));
+        TextView foot = text(
+                "重要：这个小桥必须安装在主空间，不要双开它。\n" +
+                "微信可以继续使用双开；小桥在主空间监听双开微信的系统通知。",
+                13, Color.rgb(120, 132, 145));
         foot.setGravity(Gravity.CENTER);
         root.addView(foot, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
@@ -115,16 +123,92 @@ public class MainActivity extends Activity {
         refreshStatus();
     }
 
+    @Override protected void onResume() {
+        super.onResume();
+        if (status != null) refreshStatus();
+    }
+
+    private ComponentName listenerComponent() {
+        return new ComponentName(this, BridgeNotificationService.class);
+    }
+
+    private boolean isManagedProfile() {
+        try {
+            UserManager um = (UserManager) getSystemService(USER_SERVICE);
+            return um != null && Build.VERSION.SDK_INT >= 24 && um.isManagedProfile();
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
+    private boolean hasListenerAccess() {
+        try {
+            if (Build.VERSION.SDK_INT >= 27) {
+                NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
+                return nm != null && nm.isNotificationListenerAccessGranted(listenerComponent());
+            }
+            String flat = Settings.Secure.getString(getContentResolver(), "enabled_notification_listeners");
+            return flat != null && flat.contains(listenerComponent().flattenToString());
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
+    private void openNotificationAccess() {
+        if (isManagedProfile()) {
+            status.setText("当前装在双开/工作空间，Android 不允许这里开启通知使用权。请把本 APK 安装到主空间。");
+            return;
+        }
+
+        ComponentName cn = listenerComponent();
+        Intent intent;
+        try {
+            if (Build.VERSION.SDK_INT >= 30) {
+                intent = new Intent(Settings.ACTION_NOTIFICATION_LISTENER_DETAIL_SETTINGS);
+                intent.putExtra(Settings.EXTRA_NOTIFICATION_LISTENER_COMPONENT_NAME, cn.flattenToString());
+                intent.putExtra(":settings:fragment_args_key", cn.flattenToString());
+            } else {
+                intent = new Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS);
+                intent.putExtra(":settings:fragment_args_key", cn.flattenToString());
+            }
+            startActivity(intent);
+        } catch (Throwable detailFailed) {
+            try {
+                Intent fallback = new Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS);
+                fallback.putExtra(":settings:fragment_args_key", cn.flattenToString());
+                startActivity(fallback);
+            } catch (Throwable allFailed) {
+                status.setText("系统没有打开通知使用权页面。请确认本应用安装在主空间。");
+            }
+        }
+    }
+
     private void refreshStatus() {
         SharedPreferences p = getSharedPreferences(PREFS, MODE_PRIVATE);
         boolean paired = !p.getString(KEY_TOKEN, "").isEmpty();
+        boolean managed = isManagedProfile();
+        boolean listener = !managed && hasListenerAccess();
         int userHash;
         try { userHash = Process.myUserHandle().hashCode(); } catch (Throwable e) { userHash = Integer.MIN_VALUE; }
-        status.setText((paired ? "已配对 · " : "未配对 · ") + "当前空间 user hash: " + userHash);
+
+        if (managed) {
+            status.setText("检测到双开/工作空间 · 这里无法开启通知使用权 · 请回主空间安装");
+        } else {
+            status.setText(
+                    (paired ? "已配对" : "未配对") +
+                    " · 主空间" +
+                    " · 通知使用权" + (listener ? "已开启" : "未开启") +
+                    " · user hash: " + userHash);
+        }
         codeInput.setVisibility(paired ? EditText.GONE : EditText.VISIBLE);
+        notifyButton.setEnabled(!managed);
     }
 
     private void pair() {
+        if (isManagedProfile()) {
+            status.setText("先把本 APK 安装到主空间再配对；双开空间无法使用通知监听。");
+            return;
+        }
         final String code = codeInput.getText().toString().trim();
         if (!code.matches("\\d{6}")) {
             status.setText("先输入我这边生成的 6 位配对码");
@@ -146,7 +230,7 @@ public class MainActivity extends Activity {
                         .putString(KEY_SERVER, server)
                         .apply();
                 runOnUiThread(() -> {
-                    status.setText("配对成功。再打开“通知使用权”把陨石边牧信使勾上");
+                    status.setText("配对成功。现在点“打开本应用的通知使用权”授权。");
                     refreshStatus();
                 });
             } catch (Exception e) {
