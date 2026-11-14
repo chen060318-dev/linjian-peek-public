@@ -365,6 +365,26 @@ public final class SystemUiWeChatBridge {
                 }
             }
         } catch (Exception ignored) {}
+
+        try {
+            AccessibilityNodeInfo active = svc.getRootInActiveWindow();
+            if (active != null) {
+                CharSequence p = active.getPackageName();
+                boolean isSystemUi = p != null && SYSTEMUI.contentEquals(p);
+                boolean duplicate = false;
+                if (isSystemUi) {
+                    int wid = active.getWindowId();
+                    for (AccessibilityNodeInfo existing : out) {
+                        if (existing != null && existing.getWindowId() == wid) {
+                            duplicate = true;
+                            break;
+                        }
+                    }
+                }
+                if (isSystemUi && !duplicate) out.add(active);
+                else active.recycle();
+            }
+        } catch (Exception ignored) {}
         return out;
     }
 
