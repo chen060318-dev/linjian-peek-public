@@ -1606,6 +1606,86 @@ function makeServer({ allowedToolNames = null, principal = {} } = {}) {
         safety_note: "只读取当前 SystemUI 节点；不点击、不输入、不发送。"
       });
     }
+    if (/^SYSTEMUI_CLONE_REPLY_PROBE$/i.test(specialMode)) {
+      const openSteps = [
+        { label: "展开系统通知栏", action: "notifications", wait_ms: 1100 },
+        { label: "读取通知栏节点", action: "get_screen_nodes", package: "com.android.systemui", wait_ms: 700 }
+      ];
+      const opened = await postCommand({ action: "run_sequence", device_id, steps: openSteps, payload: { steps: openSteps, stop_on_error: false }, stop_on_error: false });
+      const openedId = opened?.command?.id;
+      const openedObserved = openedId ? await waitCommand(openedId, Math.min(wait_seconds, 20)) : null;
+
+      function extractNodes(command) {
+        try {
+          const outer = JSON.parse(command?.result || "{}");
+          const steps = Array.isArray(outer.steps) ? outer.steps : [];
+          for (let i = steps.length - 1; i >= 0; i--) {
+            const raw = steps[i]?.detail?.result;
+            if (!raw) continue;
+            try {
+              const parsed = JSON.parse(raw);
+              if (Array.isArray(parsed)) return parsed;
+            } catch {}
+          }
+        } catch {}
+        return [];
+      }
+
+      const beforeNodes = extractNodes(openedObserved?.command);
+      const sender = beforeNodes.find(n => String(n?.text || "").includes("小狗饲养员"));
+      const message = beforeNodes.find(n => /^\[\d+条\]小狗饲养员:/.test(String(n?.text || "")));
+      const anchorY = Number(message?.center_y ?? sender?.center_y ?? 0);
+      const expands = beforeNodes.filter(n => String(n?.text || "") === "展开" && n?.clickable);
+      let target = null;
+      if (anchorY && expands.length) {
+        target = expands.slice().sort((a,b) => Math.abs(Number(a.center_y)-anchorY) - Math.abs(Number(b.center_y)-anchorY))[0];
+      }
+
+      if (!target) {
+        const closeSteps = [{ label: "收起通知栏", action: "back", wait_ms: 300 }];
+        await postCommand({ action: "run_sequence", device_id, steps: closeSteps, payload: { steps: closeSteps, stop_on_error: false }, stop_on_error: false });
+        return textResult({
+          ok: false,
+          mode: "systemui_clone_reply_probe",
+          error: "clone_expand_not_found",
+          sender_found: !!sender,
+          message_found: !!message,
+          before_nodes: beforeNodes,
+          safety_note: "只读探针，没有发送任何消息。"
+        });
+      }
+
+      const tapSteps = [
+        { label: "展开克隆微信通知卡", action: "tap", x: Number(target.center_x), y: Number(target.center_y), wait_ms: 850 },
+        { label: "读取展开后的节点", action: "get_screen_nodes", package: "com.android.systemui", wait_ms: 650 }
+      ];
+      const tapped = await postCommand({ action: "run_sequence", device_id, steps: tapSteps, payload: { steps: tapSteps, stop_on_error: false }, stop_on_error: false });
+      const tappedId = tapped?.command?.id;
+      const tappedObserved = tappedId ? await waitCommand(tappedId, Math.min(wait_seconds, 20)) : null;
+      const afterNodes = extractNodes(tappedObserved?.command);
+
+      const hasReply = afterNodes.some(n => String(n?.text || "") === "回复" || /回复/.test(String(n?.text || "")));
+      const editable = afterNodes.filter(n => !!n?.editable);
+      const sendNodes = afterNodes.filter(n => /^(发送|Send)$/i.test(String(n?.text || "")));
+
+      const closeSteps = [{ label: "收起通知栏", action: "back", wait_ms: 300 }];
+      const closed = await postCommand({ action: "run_sequence", device_id, steps: closeSteps, payload: { steps: closeSteps, stop_on_error: false }, stop_on_error: false });
+      const closedId = closed?.command?.id;
+      if (closedId) await waitCommand(closedId, Math.min(wait_seconds, 10));
+
+      return textResult({
+        ok: true,
+        mode: "systemui_clone_reply_probe",
+        target_expand: target,
+        sender_text: sender?.text || "",
+        message_text: message?.text || "",
+        has_reply: hasReply,
+        editable_nodes: editable,
+        send_nodes: sendNodes,
+        after_nodes: afterNodes,
+        safety_note: "只展开克隆微信通知卡并读取节点；未点击回复、未输入、未发送消息。"
+      });
+    }
     if (/^SYSTEMUI_REPLY_PROBE$/i.test(specialMode)) {
       const steps = [
         { label: "展开系统通知栏", action: "notifications", wait_ms: 1200 },
