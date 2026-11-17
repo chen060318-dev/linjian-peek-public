@@ -1054,6 +1054,91 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/activity/events":
             if not self._require_token(): return
             data = self._read_json()
+            action = str(data.get("action") or "").strip()
+            meta = data.get("metadata_json") if isinstance(data.get("metadata_json"), dict) else {}
+
+            # Compatibility tunnel for already-open ChatGPT conversations whose MCP
+            # tool list has not refreshed yet. It reuses the existing add_activity_event
+            # schema only for explicit reading_compat_* actions; normal activity logging
+            # and the dedicated reading tools remain unchanged.
+            if action == "reading_compat_pair_code":
+                code = f"{secrets.randbelow(1000000):06d}"
+                now_ms = int(time.time() * 1000)
+                with self.state.reading_lock:
+                    self.state.reading_pair_codes = {
+                        k: v for k, v in self.state.reading_pair_codes.items()
+                        if now_ms <= int(v.get("expires_at_ms") or 0)
+                    }
+                    self.state.reading_pair_codes[code] = {
+                        "device_id": clip_text(str(meta.get("device_id") or "lr-reading"), 80),
+                        "created_at_ms": now_ms,
+                        "expires_at_ms": now_ms + 10 * 60 * 1000,
+                    }
+                self._json(200, {"ok": True, "compat": True, "code": code, "expires_in_seconds": 600, "server_url": self._public_base()}); return
+
+            if action == "reading_compat_get_state":
+                with self.state.reading_lock:
+                    state = self.state.reading_state
+                    current = dict(state.get("current") or {})
+                    book_key = str(current.get("book_key") or "")
+                    notes = [dict(n) for n in state.get("notes", []) if (not book_key or str(n.get("book_key") or "") == book_key)][-200:]
+                    result = {
+                        "ok": True, "compat": True, "current": current,
+                        "human_progress": dict(state.get("human_progress") or {}),
+                        "riven_progress": dict(state.get("riven_progress") or {}),
+                        "notes": notes,
+                        "requests": [dict(x) for x in state.get("requests", [])[-50:]],
+                        "updated_at": state.get("updated_at") or "",
+                    }
+                self._json(200, result); return
+
+            if action == "reading_compat_add_riven_note":
+                with self.state.reading_lock:
+                    state = self.state.reading_state
+                    current = state.get("current") or {}
+                    note_data = dict(meta)
+                    note_data.setdefault("book_key", current.get("book_key") or "")
+                    note = sanitize_reading_note(note_data, "Riven")
+                    if not note.get("content"):
+                        self._json(400, {"ok": False, "error": "reading_note_content_required"}); return
+                    state.setdefault("notes", []).append(note)
+                    state["notes"] = state["notes"][-1000:]
+                    state["updated_at"] = now_iso()
+                    self.state.save_reading_state()
+                self._json(200, {"ok": True, "compat": True, "note": note}); return
+
+            if action == "reading_compat_set_progress":
+                with self.state.reading_lock:
+                    state = self.state.reading_state
+                    current = state.get("current") or {}
+                    progress = {
+                        "book_key": clip_text(str(meta.get("book_key") or current.get("book_key") or ""), 180),
+                        "paragraph_id": clip_text(str(meta.get("paragraph_id") or ""), 120),
+                        "chapter_n": int(meta.get("chapter_n") if meta.get("chapter_n") is not None else current.get("chapter_n") or 0),
+                        "page_no": int(meta.get("page_no") if meta.get("page_no") is not None else current.get("page_no") or 0),
+                        "status": clip_text(str(meta.get("status") or "reading"), 40),
+                        "updated_at": now_iso(),
+                    }
+                    state["riven_progress"] = progress
+                    state["updated_at"] = now_iso()
+                    self.state.save_reading_state()
+                self._json(200, {"ok": True, "compat": True, "riven_progress": progress}); return
+
+            if action == "reading_compat_ack_request":
+                request_id = str(meta.get("request_id") or "").strip()
+                target = None
+                with self.state.reading_lock:
+                    for item in self.state.reading_state.get("requests", []):
+                        if str(item.get("id") or "") == request_id:
+                            item["status"] = clip_text(str(meta.get("status") or "seen"), 40)
+                            item["ack_at"] = now_iso()
+                            target = dict(item)
+                            break
+                    if target:
+                        self.state.reading_state["updated_at"] = now_iso()
+                        self.state.save_reading_state()
+                self._json(200 if target else 404, {"ok": bool(target), "compat": True, "request": target}); return
+
             event = self.state.add_activity_event(data, max(0, min(300, int(data.get("dedupe_seconds") or 0))))
             self._json(200, {"ok": True, "event": event}); return
         if path == "/api/takeout/resolve_jd_link":
