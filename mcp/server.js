@@ -249,6 +249,14 @@ const APP_TARGET_ACTIONS = new Set([
 ]);
 
 const COMPANION_ACTION_META = {
+  reading_create_pair_code: ["陪伴", "生成共读配对码", "让与你同页 APP 和当前 ChatGPT 共用一间书房"],
+  reading_get_state: ["陪伴", "查看共读状态", "看看你现在读到哪里"],
+  reading_get_current_page: ["陪伴", "读取当前书页", "和你读同一页"],
+  reading_get_lyra_notes: ["陪伴", "查看你的页边纸条", "读你留在书页里的话"],
+  reading_add_riven_note: ["陪伴", "留下 Riven 纸条", "把一句话写回你的书页"],
+  reading_set_riven_progress: ["陪伴", "更新 Riven 阅读进度", "把我的阅读位置同步回书页"],
+  reading_get_requests: ["陪伴", "查看共读邀请", "看看你有没有叫我来读"],
+  reading_ack_request: ["陪伴", "回应共读邀请", "告诉书房我已经收到你的邀请"],
   get_phone_state: ["观察", "查看手机状态", "确认生活状态与连接情况"],
   get_life_state: ["观察", "查看今日状态", "整理电量、屏幕时间与当前状态"],
   get_guardian_calendar: ["观察", "查看守护日历", "确认最近的重要日子"],
@@ -1141,6 +1149,8 @@ function makeWalletTakeoutServer() {
 // Explicit allowlist for the everyday companion surface. Always keep high-risk phone
 // control (screen reading, tapping, input, app locks, checkout and deletion) out of this list.
 const COMPANION_ALLOWED_TOOLS = new Set([
+  "reading_create_pair_code", "reading_get_state", "reading_get_current_page", "reading_get_lyra_notes",
+  "reading_add_riven_note", "reading_set_riven_progress", "reading_get_requests", "reading_ack_request",
   "get_window_whisper", "set_window_whisper",
   "get_companion_actions", "get_activity_events", "add_activity_event",
   "get_guardian_calendar", "list_guardian_days", "add_guardian_calendar_event", "add_guardian_day", "update_guardian_day",
@@ -1188,7 +1198,7 @@ const WECHAT_ALLOWED_TOOLS = new Set([
 
 
 function makeServer({ allowedToolNames = null, principal = {} } = {}) {
-  const server = new McpServer({ name: "掌心窗", version: "0.3.9.8-wechatbridge" });
+  const server = new McpServer({ name: "掌心窗", version: "0.3.10.0-readingbridge" });
   const commandBackedTools = new Set([
     "peek_screen", "get_screen_nodes", "tap_text", "input_text", "draft_xhs_comment", "xhs_comment", "send_visible_comment_after_confirmation",
     "douyin_open_messages", "douyin_open_chat", "douyin_check_streak", "douyin_draft_message", "douyin_send_message", "douyin_list_publish_media", "douyin_prepare_post", "douyin_publish_current_post",
@@ -1250,6 +1260,87 @@ function makeServer({ allowedToolNames = null, principal = {} } = {}) {
       return { content: [{ type: "text", text: JSON.stringify(profile) }], structuredContent: profile };
     });
   }
+
+  // 「与你同页」共读工具：复用掌心窗已连接的 OAuth，不要求移动端再接一个自定义 MCP。
+  server.tool("reading_create_pair_code", "为「与你同页」APP生成一次性 6 位配对码。用户要把共读 APP 接到当前 ChatGPT、重新配对或换手机时调用；验证码 10 分钟有效，不会泄露掌心窗手机 Token。", {
+    device_id: z.string().default("lr-reading")
+  }, async ({ device_id = "lr-reading" }) => {
+    const res = await linjianFetch("/api/reading/pair-code", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ device_id })
+    });
+    return textResult(await res.json());
+  });
+
+  server.tool("reading_get_state", "读取「与你同页」完整共读状态：当前书、章节、页码、梨梨阅读位置、Riven 阅读位置、当前书的页边纸条和最近共读邀请。用户提到正在读书、共读、读到哪里、纸条或让我陪读时优先调用。", {}, async () => {
+    const res = await linjianFetch("/api/reading/state");
+    return textResult(await res.json());
+  });
+
+  server.tool("reading_get_current_page", "直接读取梨梨在「与你同页」APP当前打开的书页正文和相邻上下文。用户说“陪我读”“看我现在这页”“你读到了吗”等共读表达时直接调用，不要让用户复制正文。", {}, async () => {
+    const res = await linjianFetch("/api/reading/state");
+    const data = await res.json();
+    const current = data?.current || {};
+    return textResult({
+      ok: Boolean(data?.ok),
+      current,
+      human_progress: data?.human_progress || {},
+      riven_progress: data?.riven_progress || {},
+      notes: Array.isArray(data?.notes) ? data.notes : [],
+      pending_requests: Array.isArray(data?.requests) ? data.requests.filter((x) => x?.status === "pending") : []
+    });
+  });
+
+  server.tool("reading_get_lyra_notes", "读取梨梨在共读书页里留下的页边纸条。适合继续她的感想、回答她写在书里的疑问，或判断她对哪句话停留过。", {
+    limit: z.number().int().min(1).max(200).default(80)
+  }, async ({ limit = 80 }) => {
+    const res = await linjianFetch(`/api/reading/notes?author=${encodeURIComponent("你")}&limit=${encodeURIComponent(limit)}`);
+    return textResult(await res.json());
+  });
+
+  server.tool("reading_add_riven_note", "把 Riven 的真实读后感直接写回「与你同页」APP 的页边。paragraph_id 应来自 reading_get_current_page；不要伪造用户没有打开过的段落。", {
+    paragraph_id: z.string().min(1).max(120),
+    content: z.string().min(1).max(4000),
+    category: z.string().max(80).default("感想"),
+    quote: z.string().max(1200).default("")
+  }, async ({ paragraph_id, content, category = "感想", quote = "" }) => {
+    const res = await linjianFetch("/api/reading/riven-note", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ paragraph_id, content, category, quote })
+    });
+    return textResult(await res.json());
+  });
+
+  server.tool("reading_set_riven_progress", "更新 Riven 在「与你同页」里的阅读位置。读完某段后调用，让 APP 顶部和进度条显示我的真实位置；paragraph_id 应来自实际读取到的书页。", {
+    paragraph_id: z.string().min(1).max(120),
+    status: z.enum(["reading", "paused", "done"]).default("reading")
+  }, async ({ paragraph_id, status = "reading" }) => {
+    const res = await linjianFetch("/api/reading/riven-progress", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ paragraph_id, status })
+    });
+    return textResult(await res.json());
+  });
+
+  server.tool("reading_get_requests", "读取「与你同页」APP 最近发来的共读邀请，例如梨梨点了“叫 Riven 来读这一页”。只读取邀请，不会自动假装已读。", {}, async () => {
+    const res = await linjianFetch("/api/reading/requests");
+    return textResult(await res.json());
+  });
+
+  server.tool("reading_ack_request", "在实际读取书页后，把一条共读邀请标记为已收到或已读，避免 APP 一直显示等待。", {
+    request_id: z.string().min(1).max(120),
+    status: z.enum(["seen", "reading", "done"]).default("seen")
+  }, async ({ request_id, status = "seen" }) => {
+    const res = await linjianFetch("/api/reading/request-ack", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ request_id, status })
+    });
+    return textResult(await res.json());
+  });
 
   function wechatCoordHint(raw, key) {
     const m = String(raw || "").match(new RegExp("(?:^|\\|)" + key + "=(\\d{1,4}),(\\d{1,4})(?:\\||$)"));

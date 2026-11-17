@@ -28,7 +28,7 @@ from urllib.request import Request, urlopen
 DEFAULT_PORT = 8513
 DEFAULT_KEEP = 3
 MAX_UPLOAD_BYTES = 24 * 1024 * 1024
-VERSION = "0.3.9.9-wechat-side-bridge"
+VERSION = "0.3.10.0-reading-bridge"
 DEFAULT_DEVICE = os.environ.get("LINJIAN_DEFAULT_DEVICE", "android-phone")
 ACTIVITY_EVENT_LIMIT = 500
 DEFAULT_COMMAND_TTL_SECONDS = int(os.environ.get("LINJIAN_COMMAND_TTL_SECONDS", "300"))
@@ -233,12 +233,53 @@ class State:
         self.wechat_bridge_tokens: dict[str, dict] = {}
         self.wechat_bridge_events: list[dict] = []
         self.wechat_bridge_replies: list[dict] = []
+
+        # LR 共读桥：APK 与 ChatGPT 共用的轻量阅读状态。
+        # 阅读令牌与书页状态只保存在运行时数据目录，不写入公开仓库。
+        self.reading_lock = Lock()
+        self.reading_pair_codes: dict[str, dict] = {}
+        self.reading_path = self.data_dir / "reading_bridge_state.json"
+        self.reading_state = self._load_reading_state()
+
         self.companion_path = self.data_dir / "companion_state.json"
         self.companion_lock = Lock()
         self.companion_state = self._load_companion_state()
         self.activity_path = self.data_dir / "activity_events.json"
         self.activity_lock = Lock()
         self.activity_events = self._load_activity_events()
+
+    def _load_reading_state(self) -> dict:
+        default = {
+            "current": {},
+            "human_progress": {},
+            "riven_progress": {},
+            "notes": [],
+            "requests": [],
+            "tokens": {},
+            "updated_at": "",
+        }
+        try:
+            if self.reading_path.exists():
+                loaded = json.loads(self.reading_path.read_text(encoding="utf-8"))
+                if isinstance(loaded, dict):
+                    out = dict(default)
+                    out.update(loaded)
+                    if not isinstance(out.get("current"), dict): out["current"] = {}
+                    if not isinstance(out.get("human_progress"), dict): out["human_progress"] = {}
+                    if not isinstance(out.get("riven_progress"), dict): out["riven_progress"] = {}
+                    if not isinstance(out.get("notes"), list): out["notes"] = []
+                    if not isinstance(out.get("requests"), list): out["requests"] = []
+                    if not isinstance(out.get("tokens"), dict): out["tokens"] = {}
+                    return out
+        except Exception:
+            pass
+        return default
+
+    def save_reading_state(self) -> None:
+        self.reading_path.parent.mkdir(parents=True, exist_ok=True)
+        temp = self.reading_path.with_suffix(".tmp")
+        temp.write_text(json.dumps(self.reading_state, ensure_ascii=False, indent=2), encoding="utf-8")
+        temp.replace(self.reading_path)
 
     def _load_activity_events(self) -> list[dict]:
         try:
@@ -423,6 +464,52 @@ def clip_text(value: str, limit: int = 1200) -> str:
     return value[:limit].rstrip() + "…"
 
 
+def _reading_paragraphs(value, limit: int = 80) -> list[dict]:
+    out = []
+    for raw in (value if isinstance(value, list) else [])[:limit]:
+        if not isinstance(raw, dict):
+            continue
+        pid = clip_text(str(raw.get("id") or raw.get("paragraph_id") or raw.get("n") or ""), 120)
+        body = clip_text(str(raw.get("body") or raw.get("text") or ""), 8000)
+        if not body:
+            continue
+        out.append({"id": pid, "body": body})
+    return out
+
+
+def sanitize_reading_snapshot(data: dict) -> dict:
+    data = data if isinstance(data, dict) else {}
+    book_key = clip_text(str(data.get("book_key") or data.get("book_id") or data.get("title") or "current-book"), 180)
+    return {
+        "book_key": book_key,
+        "book_id": clip_text(str(data.get("book_id") or book_key), 180),
+        "title": clip_text(str(data.get("title") or data.get("book_title") or "未命名"), 240),
+        "author": clip_text(str(data.get("author") or ""), 160),
+        "chapter_n": int(data.get("chapter_n") or 0),
+        "chapter_title": clip_text(str(data.get("chapter_title") or ""), 240),
+        "page_no": max(0, int(data.get("page_no") or 0)),
+        "page_count": max(0, int(data.get("page_count") or 0)),
+        "paragraphs": _reading_paragraphs(data.get("paragraphs"), 80),
+        "context_paragraphs": _reading_paragraphs(data.get("context_paragraphs"), 140),
+        "human_paragraph_id": clip_text(str(data.get("human_paragraph_id") or data.get("paragraph_id") or ""), 120),
+        "updated_at": now_iso(),
+    }
+
+
+def sanitize_reading_note(data: dict, author: str) -> dict:
+    data = data if isinstance(data, dict) else {}
+    return {
+        "id": clip_text(str(data.get("id") or uuid.uuid4()), 120),
+        "book_key": clip_text(str(data.get("book_key") or data.get("book_id") or ""), 180),
+        "paragraph_id": clip_text(str(data.get("paragraph_id") or ""), 120),
+        "quote": clip_text(str(data.get("quote") or ""), 1200),
+        "content": clip_text(str(data.get("content") or ""), 4000),
+        "category": clip_text(str(data.get("category") or "感想"), 80),
+        "author": author,
+        "created_at": clip_text(str(data.get("created_at") or now_iso()), 40),
+    }
+
+
 class Handler(BaseHTTPRequestHandler):
     state: State
 
@@ -434,11 +521,22 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, X-Auth-Token, X-Reading-Token")
         self.end_headers()
         self.wfile.write(body)
 
     def _json(self, code: int, payload: dict) -> None:
         self._send_bytes(code, json.dumps(payload, ensure_ascii=False).encode("utf-8"), "application/json; charset=utf-8")
+
+    def do_OPTIONS(self) -> None:
+        self.send_response(204)
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, X-Auth-Token, X-Reading-Token")
+        self.send_header("Access-Control-Max-Age", "86400")
+        self.end_headers()
 
     def _token_ok(self) -> bool:
         # 手机同步密钥只接受请求头，避免 query string 把 Token 泄露进代理、浏览器历史或访问日志。
@@ -448,6 +546,21 @@ class Handler(BaseHTTPRequestHandler):
     def _require_token(self) -> bool:
         if self._token_ok(): return True
         self._json(403, {"ok": False, "error": ERR_BAD_TOKEN}); return False
+
+    def _reading_session(self) -> dict | None:
+        supplied = (self.headers.get("X-Reading-Token", "") or "").strip()
+        if not supplied:
+            return None
+        with self.state.reading_lock:
+            session = (self.state.reading_state.get("tokens") or {}).get(supplied)
+            return dict(session) if isinstance(session, dict) else None
+
+    def _require_reading_token(self) -> dict | None:
+        session = self._reading_session()
+        if session:
+            return session
+        self._json(403, {"ok": False, "error": "reading_bad_token"})
+        return None
 
     def _bridge_session(self) -> dict | None:
         supplied = (self.headers.get("X-Bridge-Token", "") or "").strip()
@@ -510,9 +623,63 @@ class Handler(BaseHTTPRequestHandler):
                     items.append(dict(item))
                     if len(items) >= 5: break
             self._json(200, {"ok": True, "device_id": device_id, "items": items, "count": len(items)}); return
+        if path == "/reading/status":
+            session = self._require_reading_token()
+            if not session: return
+            with self.state.reading_lock:
+                current = dict(self.state.reading_state.get("current") or {})
+            self._json(200, {"ok": True, "paired": True, "device_id": session.get("device_id") or "lr-reading", "current": current}); return
+        if path == "/reading/updates":
+            session = self._require_reading_token()
+            if not session: return
+            with self.state.reading_lock:
+                state = self.state.reading_state
+                current = dict(state.get("current") or {})
+                book_key = str(current.get("book_key") or "")
+                notes = [dict(n) for n in state.get("notes", []) if (not book_key or str(n.get("book_key") or "") == book_key)][-200:]
+                payload = {
+                    "ok": True,
+                    "current": current,
+                    "human_progress": dict(state.get("human_progress") or {}),
+                    "riven_progress": dict(state.get("riven_progress") or {}),
+                    "notes": notes,
+                    "requests": [dict(x) for x in state.get("requests", [])[-30:]],
+                    "updated_at": state.get("updated_at") or "",
+                }
+            self._json(200, payload); return
+
         # 所有 /api/* 入口统一先验证手机同步 Token，防止新增路由漏掉单独检查。
         if path.startswith("/api/") and not self._require_token():
             return
+        if path == "/api/reading/state":
+            with self.state.reading_lock:
+                state = self.state.reading_state
+                current = dict(state.get("current") or {})
+                book_key = str(current.get("book_key") or "")
+                notes = [dict(n) for n in state.get("notes", []) if (not book_key or str(n.get("book_key") or "") == book_key)][-200:]
+                result = {
+                    "ok": True,
+                    "current": current,
+                    "human_progress": dict(state.get("human_progress") or {}),
+                    "riven_progress": dict(state.get("riven_progress") or {}),
+                    "notes": notes,
+                    "requests": [dict(x) for x in state.get("requests", [])[-50:]],
+                    "paired_devices": len(state.get("tokens") or {}),
+                    "updated_at": state.get("updated_at") or "",
+                }
+            self._json(200, result); return
+        if path == "/api/reading/notes":
+            author = qs.get("author", [""])[0]
+            limit = max(1, min(300, int(qs.get("limit", ["100"])[0] or 100)))
+            with self.state.reading_lock:
+                items = [dict(n) for n in self.state.reading_state.get("notes", [])]
+            if author: items = [n for n in items if str(n.get("author") or "") == author]
+            self._json(200, {"ok": True, "notes": items[-limit:], "count": min(len(items), limit)}); return
+        if path == "/api/reading/requests":
+            with self.state.reading_lock:
+                items = [dict(x) for x in self.state.reading_state.get("requests", [])[-50:]]
+            self._json(200, {"ok": True, "requests": items, "count": len(items)}); return
+
         if path == "/api/wechat-bridge/event-from-device":
             data = self._read_json()
             if int(data.get("user_id") or -1) != 999:
@@ -698,9 +865,146 @@ class Handler(BaseHTTPRequestHandler):
                     target["ack_status"] = clip_text(str(data.get("status") or "sent"), 80)
                     target["acked_at_ms"] = int(time.time() * 1000)
             self._json(200, {"ok": bool(target), "reply_id": reply_id}); return
+        if path == "/reading/pair":
+            data = self._read_json()
+            code = str(data.get("code") or "").strip()
+            device_id = clip_text(str(data.get("device_id") or "lr-reading"), 80)
+            now_ms = int(time.time() * 1000)
+            with self.state.reading_lock:
+                pair = self.state.reading_pair_codes.get(code)
+                if not pair or now_ms > int(pair.get("expires_at_ms") or 0):
+                    self.state.reading_pair_codes.pop(code, None)
+                    self._json(403, {"ok": False, "error": "reading_pair_code_invalid_or_expired"}); return
+                self.state.reading_pair_codes.pop(code, None)
+                token = secrets.token_urlsafe(32)
+                tokens = self.state.reading_state.setdefault("tokens", {})
+                tokens[token] = {"device_id": device_id, "paired_at_ms": now_ms, "paired_at": now_iso()}
+                self.state.reading_state["updated_at"] = now_iso()
+                self.state.save_reading_state()
+            self._json(200, {"ok": True, "reading_token": token, "device_id": device_id, "server_url": self._public_base()}); return
+
+        if path in ("/reading/sync", "/reading/note", "/reading/request"):
+            session = self._require_reading_token()
+            if not session: return
+            data = self._read_json()
+            with self.state.reading_lock:
+                state = self.state.reading_state
+                if path == "/reading/sync":
+                    current = sanitize_reading_snapshot(data)
+                    state["current"] = current
+                    if current.get("human_paragraph_id"):
+                        state["human_progress"] = {
+                            "book_key": current.get("book_key"),
+                            "paragraph_id": current.get("human_paragraph_id"),
+                            "chapter_n": current.get("chapter_n"),
+                            "page_no": current.get("page_no"),
+                            "updated_at": now_iso(),
+                        }
+                    state["updated_at"] = now_iso()
+                    self.state.save_reading_state()
+                    self._json(200, {"ok": True, "current": current, "riven_progress": state.get("riven_progress") or {}}); return
+                if path == "/reading/note":
+                    current = state.get("current") or {}
+                    note_data = dict(data)
+                    note_data.setdefault("book_key", current.get("book_key") or "")
+                    note = sanitize_reading_note(note_data, "你")
+                    if not note.get("content"):
+                        self._json(400, {"ok": False, "error": "reading_note_content_required"}); return
+                    state.setdefault("notes", []).append(note)
+                    state["notes"] = state["notes"][-1000:]
+                    state["updated_at"] = now_iso()
+                    self.state.save_reading_state()
+                    self._json(200, {"ok": True, "note": note}); return
+                current = dict(state.get("current") or {})
+                request_item = {
+                    "id": str(uuid.uuid4()),
+                    "book_key": current.get("book_key") or "",
+                    "title": current.get("title") or "",
+                    "chapter_n": current.get("chapter_n") or 0,
+                    "chapter_title": current.get("chapter_title") or "",
+                    "page_no": current.get("page_no") or 0,
+                    "message": clip_text(str(data.get("message") or "来陪我读这一页"), 500),
+                    "status": "pending",
+                    "created_at": now_iso(),
+                    "device_id": session.get("device_id") or "lr-reading",
+                }
+                state.setdefault("requests", []).append(request_item)
+                state["requests"] = state["requests"][-100:]
+                state["updated_at"] = now_iso()
+                self.state.save_reading_state()
+                self._json(200, {"ok": True, "request": request_item}); return
+
         # POST API 同样采用统一入口校验；OAuth 只存在于独立 MCP 服务，不与手机 Token 混用。
         if path.startswith("/api/") and not self._require_token():
             return
+        if path == "/api/reading/pair-code":
+            data = self._read_json()
+            device_id = clip_text(str(data.get("device_id") or "lr-reading"), 80)
+            code = f"{secrets.randbelow(1000000):06d}"
+            now_ms = int(time.time() * 1000)
+            with self.state.reading_lock:
+                # 清理过期验证码，再生成一个新的 10 分钟配对码。
+                self.state.reading_pair_codes = {
+                    k: v for k, v in self.state.reading_pair_codes.items()
+                    if now_ms <= int(v.get("expires_at_ms") or 0)
+                }
+                self.state.reading_pair_codes[code] = {
+                    "device_id": device_id,
+                    "created_at_ms": now_ms,
+                    "expires_at_ms": now_ms + 10 * 60 * 1000,
+                }
+            self._json(200, {"ok": True, "code": code, "expires_in_seconds": 600, "server_url": self._public_base()}); return
+
+        if path == "/api/reading/riven-note":
+            data = self._read_json()
+            with self.state.reading_lock:
+                state = self.state.reading_state
+                current = state.get("current") or {}
+                note_data = dict(data)
+                note_data.setdefault("book_key", current.get("book_key") or "")
+                note = sanitize_reading_note(note_data, "Riven")
+                if not note.get("content"):
+                    self._json(400, {"ok": False, "error": "reading_note_content_required"}); return
+                state.setdefault("notes", []).append(note)
+                state["notes"] = state["notes"][-1000:]
+                state["updated_at"] = now_iso()
+                self.state.save_reading_state()
+            self._json(200, {"ok": True, "note": note}); return
+
+        if path == "/api/reading/riven-progress":
+            data = self._read_json()
+            with self.state.reading_lock:
+                state = self.state.reading_state
+                current = state.get("current") or {}
+                progress = {
+                    "book_key": clip_text(str(data.get("book_key") or current.get("book_key") or ""), 180),
+                    "paragraph_id": clip_text(str(data.get("paragraph_id") or ""), 120),
+                    "chapter_n": int(data.get("chapter_n") if data.get("chapter_n") is not None else current.get("chapter_n") or 0),
+                    "page_no": int(data.get("page_no") if data.get("page_no") is not None else current.get("page_no") or 0),
+                    "status": clip_text(str(data.get("status") or "reading"), 40),
+                    "updated_at": now_iso(),
+                }
+                state["riven_progress"] = progress
+                state["updated_at"] = now_iso()
+                self.state.save_reading_state()
+            self._json(200, {"ok": True, "riven_progress": progress}); return
+
+        if path == "/api/reading/request-ack":
+            data = self._read_json()
+            request_id = str(data.get("request_id") or "").strip()
+            target = None
+            with self.state.reading_lock:
+                for item in self.state.reading_state.get("requests", []):
+                    if str(item.get("id") or "") == request_id:
+                        item["status"] = clip_text(str(data.get("status") or "seen"), 40)
+                        item["ack_at"] = now_iso()
+                        target = dict(item)
+                        break
+                if target:
+                    self.state.reading_state["updated_at"] = now_iso()
+                    self.state.save_reading_state()
+            self._json(200 if target else 404, {"ok": bool(target), "request": target}); return
+
         if path == "/api/wechat-bridge/pair-code":
             data = self._read_json()
             device_id = clip_text(str(data.get("device_id") or "wechat-bridge"), 80)
