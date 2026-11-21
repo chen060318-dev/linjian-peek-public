@@ -1034,6 +1034,16 @@ const WALLET_TAKEOUT_ACTIONS = new Set([
   "prepare_takeout_checkout", "auto_takeout_checkout", "get_takeout_checkout_status", "cancel_takeout_checkout"
 ]);
 
+const TAKEOUT_ONLY_ACTIONS = new Set([
+  "linjian_status",
+  "get_takeout_state", "set_takeout_budget", "set_takeout_preferences",
+  "add_takeout_card", "save_takeout_card", "update_takeout_card", "delete_takeout_card", "remove_takeout_card",
+  "list_takeout_cards", "list_takeout_meals", "remember_takeout_meal", "remember_current_takeout_meal",
+  "suggest_takeout_options", "create_takeout_plan", "takeout_wallet_request",
+  "open_takeout_link", "open_takeout_plan", "copy_takeout_note", "record_takeout_order",
+  "prepare_takeout_checkout", "auto_takeout_checkout", "get_takeout_checkout_status", "cancel_takeout_checkout"
+]);
+
 function parsePayloadJson(payload_json = "") {
   const raw = String(payload_json || "").trim();
   if (!raw) return {};
@@ -1143,6 +1153,35 @@ function makeWalletTakeoutServer() {
     return textResult({ ok: true, schema_mode: "wallet_takeout_only", version: "0.3.9.0", has_url: Boolean(LINJIAN_URL_CANDIDATES.length), has_token: Boolean(LINJIAN_TOKEN), linjian_url: effectiveLinjianUrl(), health, tools: Array.from(WALLET_TAKEOUT_ACTIONS), note: "如果普通 /mcp 里新增工具没有暴露，请让 AI 客户端连接 /mcp-wallet。" });
   });
   registerWalletTakeoutTools(server, { includeUnified: true });
+  return server;
+}
+
+function makeTakeoutServer() {
+  const server = new McpServer({ name: "梨梨外卖", version: "0.3.10.0" });
+  const originalTool = server.tool.bind(server);
+  server.tool = (...args) => {
+    const toolName = String(args[0] || "");
+    if (!TAKEOUT_ONLY_ACTIONS.has(toolName)) return undefined;
+    return originalTool(...args);
+  };
+  server.tool("linjian_status", "检查掌心窗后端、外卖专用 MCP 配置和手机连接状态。", {}, async () => {
+    const configErrors = [];
+    if (!LINJIAN_URL_CANDIDATES.length) configErrors.push("Missing env LINJIAN_URL");
+    if (!LINJIAN_TOKEN) configErrors.push("Missing env LINJIAN_TOKEN");
+    const health = configErrors.length ? { ok: false, error: configErrors.join("; ") } : await linjianFetch("/health").then((r) => r.json()).catch((e) => ({ ok: false, error: String(e) }));
+    return textResult({
+      ok: true,
+      schema_mode: "takeout_only",
+      version: "0.3.10.0",
+      has_url: Boolean(LINJIAN_URL_CANDIDATES.length),
+      has_token: Boolean(LINJIAN_TOKEN),
+      linjian_url: effectiveLinjianUrl(),
+      health,
+      tools: Array.from(TAKEOUT_ONLY_ACTIONS).filter((x) => x !== "linjian_status"),
+      payment_guard: "Automation may prepare the order and reach checkout, but never performs the final payment."
+    });
+  });
+  registerWalletTakeoutTools(server, { includeUnified: false });
   return server;
 }
 
@@ -3778,6 +3817,24 @@ app.post("/mcp-wallet", requireOAuth(MCP_CONTROL_SCOPE), async (req, res) => {
   }
 });
 app.get("/mcp-wallet", requireOAuth(MCP_CONTROL_SCOPE), (_req, res) => res.status(405).json({ ok: false, error: "Use POST /mcp-wallet." }));
+
+app.post("/mcp-takeout", requireOAuth(MCP_CONTROL_SCOPE), async (req, res) => {
+  if (!MCP_ENABLE_COMPANION_TOOLS && !MCP_ENABLE_WALLET_TOOLS) {
+    return res.status(404).json({ ok: false, error: "takeout_tools_disabled" });
+  }
+  try {
+    const server = makeTakeoutServer();
+    const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+    const body = sanitizeMcpRequestBody(req.body);
+    res.on("close", () => transport.close());
+    await server.connect(transport);
+    await transport.handleRequest(req, res, body);
+  } catch (err) {
+    console.error(err);
+    if (!res.headersSent) res.status(500).json({ jsonrpc: "2.0", error: { code: -32603, message: "Internal MCP error" }, id: null });
+  }
+});
+app.get("/mcp-takeout", requireOAuth(MCP_CONTROL_SCOPE), (_req, res) => res.status(405).json({ ok: false, error: "Use POST /mcp-takeout." }));
 
 const sseTransports = new Map();
 app.get("/sse", requireOAuth(MCP_READ_SCOPE, MCP_CONNECT_SCOPE), async (req, res) => {
