@@ -98,7 +98,7 @@ test("companion-enabled MCP entry challenge requests read and control scopes", a
 });
 
 test("all MCP transports reject missing credentials", async () => {
-  for (const [method, path] of [["POST", "/mcp"], ["GET", "/sse"], ["POST", "/messages?sessionId=fake"], ["POST", "/mcp-wallet"]]) {
+  for (const [method, path] of [["POST", "/mcp"], ["GET", "/sse"], ["POST", "/messages?sessionId=fake"], ["POST", "/mcp-wallet"], ["POST", "/mcp-takeout"]]) {
     const response = await fetch(audience + path, {
       method,
       headers: method === "POST" ? { "content-type": "application/json" } : {},
@@ -169,6 +169,35 @@ test("wallet and control surface remains disabled with valid control scope", asy
     body: "{}"
   });
   assert.equal(response.status, 404);
+});
+
+
+test("dedicated takeout endpoint exposes only takeout tools with companion control scope", async () => {
+  const accessToken = await token("phone.read phone.control");
+  const response = await fetch(`${audience}/mcp-takeout`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${accessToken}`,
+      "content-type": "application/json",
+      accept: "application/json, text/event-stream"
+    },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 61, method: "tools/list", params: {} })
+  });
+  assert.equal(response.status, 200);
+  const body = await response.text();
+  for (const enabled of [
+    "get_takeout_state", "set_takeout_preferences", "list_takeout_meals",
+    "remember_takeout_meal", "suggest_takeout_options", "create_takeout_plan",
+    "prepare_takeout_checkout", "get_takeout_checkout_status", "cancel_takeout_checkout"
+  ]) {
+    assert.match(body, new RegExp(`"name":"${enabled}"`), `expected ${enabled}`);
+  }
+  for (const disabled of [
+    "wallet_takeout_action", "get_wallet_state", "delete_wallet_record",
+    "tap_text", "input_text", "send_phone_command", "open_app"
+  ]) {
+    assert.doesNotMatch(body, new RegExp(`"name":"${disabled}"`), `unexpected ${disabled}`);
+  }
 });
 
 
