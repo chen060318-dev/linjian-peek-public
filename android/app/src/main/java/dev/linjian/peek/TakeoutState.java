@@ -31,7 +31,7 @@ public class TakeoutState {
     private static final String KEY_LAST_PLAN = "last_plan_json";
     private static final String KEY_CHECKOUT_SESSION = "checkout_session_json";
     private static final int MAX_CARDS = 80;
-    private static final Pattern URL_PATTERN = Pattern.compile("(?i)(https?://[^\\s\\\"'<>]+|(?:meituan|eleme)://[^\\s\\\"'<>]+)");
+    private static final Pattern URL_PATTERN = Pattern.compile("(?i)(https?://[^\\s\\\"'<>]+|(?:meituan|eleme|taobao|tbopen)://[^\\s\\\"'<>]+)");
 
     private static SharedPreferences prefs(Context ctx) { return ctx.getSharedPreferences(PREF, Context.MODE_PRIVATE); }
 
@@ -423,6 +423,7 @@ public class TakeoutState {
         if (s.contains("3.cn")) return "";
         if (s.contains("jd.com") || s.contains("jingdong") || s.contains("京东")) return "com.jingdong.app.mall";
         if (s.contains("meituan") || s.contains("美团")) return "com.sankuai.meituan";
+        if (s.contains("m.tb.cn") || s.contains("taobao.com") || s.contains("taobao://") || s.contains("tbopen://") || s.contains("淘宝闪购") || s.contains("淘宝")) return "com.taobao.taobao";
         if (s.contains("ele.me") || s.contains("eleme") || s.contains("饿了么")) return "me.ele";
         return "";
     }
@@ -569,7 +570,7 @@ public class TakeoutState {
     private static double priceMax(JSONObject c) { double max = c.optDouble("price_max", 0); return max > 0 ? max : c.optDouble("price_min", 0); }
     private static double estimate(JSONObject c, double fallback) { double min = c.optDouble("price_min", 0), max = priceMax(c); if (min > 0 && max > 0) return WalletState.round2((min + max) / 2.0); if (max > 0) return WalletState.round2(max); return WalletState.round2(Math.max(0, fallback)); }
     private static String reasonFor(JSONObject c, boolean budgetOk, double budget) { return budgetOk ? "在单餐预算内，适合快速下单。" : "可能超过单餐预算 ¥" + WalletState.money(budget) + "，可先走小金库申请。"; }
-    private static String guessPlatform(String link) { String s = link == null ? "" : link.toLowerCase(Locale.US); if (s.contains("3.cn") || s.contains("jd.com") || s.contains("jingdong")) return "京东"; if (s.contains("meituan")) return "美团"; if (s.contains("ele") || s.contains("eleme")) return "饿了么"; return "外卖平台"; }
+    private static String guessPlatform(String link) { String s = link == null ? "" : link.toLowerCase(Locale.US); if (s.contains("3.cn") || s.contains("jd.com") || s.contains("jingdong")) return "京东"; if (s.contains("m.tb.cn") || s.contains("taobao.com") || s.contains("taobao://") || s.contains("tbopen://")) return "淘宝闪购"; if (s.contains("meituan")) return "美团"; if (s.contains("ele") || s.contains("eleme")) return "淘宝闪购"; return "外卖平台"; }
     public static String normalizeLink(String raw) {
         if (raw == null) return "";
         String s = raw.trim();
@@ -581,7 +582,7 @@ public class TakeoutState {
         }
         return s;
     }
-    private static boolean supportedLink(String link) { return link.startsWith("http://") || link.startsWith("https://") || link.startsWith("meituan://") || link.startsWith("eleme://"); }
+    private static boolean supportedLink(String link) { return link.startsWith("http://") || link.startsWith("https://") || link.startsWith("meituan://") || link.startsWith("eleme://") || link.startsWith("taobao://") || link.startsWith("tbopen://"); }
     private static JSONArray normalizeChoices(Object value) {
         JSONArray out = new JSONArray();
         try {
@@ -616,7 +617,7 @@ public class TakeoutState {
         String s = raw.trim();
         Matcher q = Pattern.compile("[「『\"“]([^」』\"”]{3,60})[」』\"”]").matcher(s);
         if (q.find()) {
-            String v = q.group(1).trim().replaceFirst("^(?:京东外卖|美团外卖|饿了么)\\s*[|｜:：-]\\s*", "");
+            String v = q.group(1).trim().replaceFirst("^(?:京东外卖|美团外卖|饿了么|淘宝闪购)\\s*[|｜:：-]\\s*", "");
             if (v.length() >= 3) return v;
         }
         return "";
