@@ -28,7 +28,7 @@ from urllib.request import Request, urlopen
 DEFAULT_PORT = 8513
 DEFAULT_KEEP = 3
 MAX_UPLOAD_BYTES = 24 * 1024 * 1024
-VERSION = "0.3.10.0-reading-bridge"
+VERSION = "0.3.10.1-camera-consent"
 DEFAULT_DEVICE = os.environ.get("LINJIAN_DEFAULT_DEVICE", "android-phone")
 ACTIVITY_EVENT_LIMIT = 500
 DEFAULT_COMMAND_TTL_SECONDS = int(os.environ.get("LINJIAN_COMMAND_TTL_SECONDS", "300"))
@@ -52,7 +52,7 @@ KNOWN_APPS = {
     "京东": "com.jingdong.app.mall", "jd": "com.jingdong.app.mall",
 }
 SENSITIVE_PACKAGES = {"com.eg.android.AlipayGphone", "com.tencent.mm.plugin.wallet"}
-ALLOWED_ACTIONS = {"noop", "peek", "open_app", "home", "back", "recents", "screen_off", "turn_screen_off", "lock_screen", "phone_screen_off", "tap", "swipe", "set_alarm", "send_notification", "run_sequence", "save_known_app", "get_screen_nodes", "tap_text", "input_text", "lock_app", "unlock_app", "temporary_unlock_app", "extend_lock", "deny_unlock_request", "get_lock_state", "set_emergency_passphrase", "add_locked_app", "remove_locked_app", "list_lockable_apps", "screen_break_app", "start_screen_break", "screen_break", "end_screen_break", "stop_screen_break", "temporary_screen_break_release", "temporary_screen_release", "extend_screen_break", "deny_screen_break_release_request", "deny_break_release_request", "get_screen_break_state", "set_screen_break_passphrase", "add_screen_break_app", "remove_screen_break_app", "list_screen_break_apps", "get_focus_status", "start_focus_mode", "end_focus_mode", "set_focus_plan", "reply_focus_request", "approve_focus_unlock", "deny_focus_unlock", "request_focus_unlock", "create_focus_request", "get_guidian_state", "set_guidian_config", "trigger_guidian", "mark_guidian_returned", "get_calendar_state", "upsert_calendar_event", "add_calendar_event", "delete_calendar_event", "create_diary_book", "list_diary_books", "rename_diary_book", "update_diary_book_cover", "write_diary_entry", "list_diary_entries", "read_diary_entry", "read_diary_entry_with_annotations", "add_diary_annotation", "list_diary_annotations", "mark_diary_annotations_seen", "delete_diary_annotation", "search_diary_entries", "update_diary_entry", "delete_diary_entry", "delete_diary_book", "get_wallet_state", "get_wallet_month_state", "list_wallet_months", "add_wallet_record", "list_wallet_pending", "list_wallet_approvals", "list_companion_wallet_requests", "list_wallet_request_results", "submit_wallet_approval", "submit_companion_wallet_request", "decide_wallet_approval", "save_wallet_request_result", "update_wallet_request_result", "save_user_wallet_request_result", "edit_wallet_record", "update_wallet_record", "delete_wallet_record", "remove_wallet_record", "confirm_wallet_record", "get_wallet_rules", "set_wallet_rules", "wallet_approval_request", "get_takeout_state", "list_takeout_cards", "list_takeout_meals", "remember_takeout_meal", "remember_current_takeout_meal", "set_takeout_budget", "set_takeout_preferences", "add_takeout_card", "save_takeout_card", "update_takeout_card", "remove_takeout_card", "delete_takeout_card", "suggest_takeout_options", "create_takeout_plan", "takeout_wallet_request", "open_takeout_link", "open_takeout_plan", "copy_takeout_note", "record_takeout_order", "prepare_takeout_checkout", "auto_takeout_checkout", "get_takeout_checkout_status", "cancel_takeout_checkout", "list_post_inbox", "share_post_inbox", "list_wechat_clone_inbox", "reply_wechat_clone_notification"}
+ALLOWED_ACTIONS = {"noop", "peek", "camera_photo", "open_app", "home", "back", "recents", "screen_off", "turn_screen_off", "lock_screen", "phone_screen_off", "tap", "swipe", "set_alarm", "send_notification", "run_sequence", "save_known_app", "get_screen_nodes", "tap_text", "input_text", "lock_app", "unlock_app", "temporary_unlock_app", "extend_lock", "deny_unlock_request", "get_lock_state", "set_emergency_passphrase", "add_locked_app", "remove_locked_app", "list_lockable_apps", "screen_break_app", "start_screen_break", "screen_break", "end_screen_break", "stop_screen_break", "temporary_screen_break_release", "temporary_screen_release", "extend_screen_break", "deny_screen_break_release_request", "deny_break_release_request", "get_screen_break_state", "set_screen_break_passphrase", "add_screen_break_app", "remove_screen_break_app", "list_screen_break_apps", "get_focus_status", "start_focus_mode", "end_focus_mode", "set_focus_plan", "reply_focus_request", "approve_focus_unlock", "deny_focus_unlock", "request_focus_unlock", "create_focus_request", "get_guidian_state", "set_guidian_config", "trigger_guidian", "mark_guidian_returned", "get_calendar_state", "upsert_calendar_event", "add_calendar_event", "delete_calendar_event", "create_diary_book", "list_diary_books", "rename_diary_book", "update_diary_book_cover", "write_diary_entry", "list_diary_entries", "read_diary_entry", "read_diary_entry_with_annotations", "add_diary_annotation", "list_diary_annotations", "mark_diary_annotations_seen", "delete_diary_annotation", "search_diary_entries", "update_diary_entry", "delete_diary_entry", "delete_diary_book", "get_wallet_state", "get_wallet_month_state", "list_wallet_months", "add_wallet_record", "list_wallet_pending", "list_wallet_approvals", "list_companion_wallet_requests", "list_wallet_request_results", "submit_wallet_approval", "submit_companion_wallet_request", "decide_wallet_approval", "save_wallet_request_result", "update_wallet_request_result", "save_user_wallet_request_result", "edit_wallet_record", "update_wallet_record", "delete_wallet_record", "remove_wallet_record", "confirm_wallet_record", "get_wallet_rules", "set_wallet_rules", "wallet_approval_request", "get_takeout_state", "list_takeout_cards", "list_takeout_meals", "remember_takeout_meal", "remember_current_takeout_meal", "set_takeout_budget", "set_takeout_preferences", "add_takeout_card", "save_takeout_card", "update_takeout_card", "remove_takeout_card", "delete_takeout_card", "suggest_takeout_options", "create_takeout_plan", "takeout_wallet_request", "open_takeout_link", "open_takeout_plan", "copy_takeout_note", "record_takeout_order", "prepare_takeout_checkout", "auto_takeout_checkout", "get_takeout_checkout_status", "cancel_takeout_checkout", "list_post_inbox", "share_post_inbox", "list_wechat_clone_inbox", "reply_wechat_clone_notification"}
 
 
 
@@ -223,6 +223,11 @@ class State:
         self.data_dir = Path(data_dir).resolve()
         self.shots_dir = self.data_dir / "screenshots"
         self.shots_dir.mkdir(parents=True, exist_ok=True)
+        # Camera photos are stored separately from screen captures and are never exposed
+        # through /api/latest. Only an exact command id can retrieve an approved photo.
+        self.camera_dir = self.data_dir / "camera"
+        self.camera_dir.mkdir(parents=True, exist_ok=True)
+        self.camera_keep = max(1, min(10, int(os.environ.get("LINJIAN_CAMERA_KEEP", "3"))))
         self.commands: list[dict] = []
         self.command_history: dict[str, dict] = {}
         self.commands_lock = Lock()
@@ -792,6 +797,18 @@ class Handler(BaseHTTPRequestHandler):
             shot = matches[-1]
             ctype = "image/png" if shot.suffix.lower() == ".png" else "image/jpeg"
             self._send_bytes(200, shot.read_bytes(), ctype); return
+        if path == "/api/camera":
+            if not self._require_token(): return
+            command_id = qs.get("id", [""])[0].strip()
+            if not command_id:
+                self._json(400, {"ok": False, "error": "command_id_required"}); return
+            safe_command_id = "".join(ch for ch in command_id if ch.isalnum() or ch in "-_")[:100]
+            matches = sorted(self.state.camera_dir.glob(f"camera_*_{safe_command_id}.*"), key=lambda p: p.stat().st_mtime)
+            if not matches:
+                self._json(404, {"ok": False, "error": ERR_NOT_FOUND, "command_id": command_id}); return
+            photo = matches[-1]
+            ctype = "image/png" if photo.suffix.lower() == ".png" else "image/jpeg"
+            self._send_bytes(200, photo.read_bytes(), ctype); return
         if path in ("/api/device/state", "/api/life_state"):
             if not self._require_token(): return
             device_id = qs.get("device_id", [DEFAULT_DEVICE])[0] or DEFAULT_DEVICE
@@ -1168,7 +1185,7 @@ class Handler(BaseHTTPRequestHandler):
                 "get_takeout_state": "读取外卖小助手", "set_takeout_budget": "设置外卖预算", "add_takeout_card": "保存常点外卖", "save_takeout_card": "保存常点外卖", "update_takeout_card": "编辑常点外卖", "remove_takeout_card": "删除常点外卖", "delete_takeout_card": "删除常点外卖", "list_takeout_cards": "查看常点外卖", "list_takeout_meals": "查看常点外卖", "remember_takeout_meal": "记住这道饭", "remember_current_takeout_meal": "记住当前外卖", "suggest_takeout_options": "帮忙挑外卖", "create_takeout_plan": "生成外卖计划", "takeout_wallet_request": "提交外卖申请", "open_takeout_link": "打开外卖链接", "open_takeout_plan": "打开外卖链接", "copy_takeout_note": "复制外卖备注", "record_takeout_order": "记录外卖支出", "prepare_takeout_checkout": "点到付款页", "auto_takeout_checkout": "点到付款页", "get_takeout_checkout_status": "查看外卖进度", "cancel_takeout_checkout": "取消外卖任务",
                 "get_screen_nodes": "查看当前页面",
                 "read_diary_entry_with_annotations": "读取日记批注", "add_diary_annotation": "保存页边纸条", "list_diary_annotations": "读取页边纸条", "mark_diary_annotations_seen": "标记纸条已看", "delete_diary_annotation": "删除页边纸条",
-                "peek": "查看屏幕", "run_sequence": "执行组合动作", "home": "回到手机桌面", "back": "返回上一页", "recents": "打开最近任务"
+                "peek": "查看屏幕", "camera_photo": "请求相机照片", "run_sequence": "执行组合动作", "home": "回到手机桌面", "back": "返回上一页", "recents": "打开最近任务"
             }
             event = self.state.add_activity_event({
                 "id": cmd.get("id"), "device_id": cmd.get("device_id"), "source": "companion", "type": activity_type_for_action(action),
@@ -1238,6 +1255,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/screenshot":
             if not self._require_token(): return
             self._handle_screenshot(); return
+        if path == "/api/camera":
+            if not self._require_token(): return
+            self._handle_camera_photo(); return
         self._json(404, {"ok": False, "error": ERR_BAD_METHOD})
 
     def _queue(self, cmd: dict) -> None:
@@ -1292,6 +1312,96 @@ class Handler(BaseHTTPRequestHandler):
                     })
                 except Exception: pass
         self._json(200, {"ok": True, "filename": dest.name, "size": len(data), "command_id": command_id or None})
+
+    def _handle_camera_photo(self) -> None:
+        # Camera uploads are accepted only for a live camera_photo command.
+        # There is deliberately no "latest camera" API: callers must know the
+        # exact command id created for the user-approved request.
+        command_id = (self.headers.get("X-Command-Id") or "").strip()
+        if not command_id:
+            self._json(400, {"ok": False, "error": "command_id_required"}); return
+        safe_command_id = "".join(ch for ch in command_id if ch.isalnum() or ch in "-_")[:100]
+
+        with self.state.commands_lock:
+            cmd = self.state.command_history.get(command_id)
+            if cmd is None:
+                self._json(404, {"ok": False, "error": "camera_command_not_found", "command_id": command_id}); return
+            if cmd.get("action") != "camera_photo":
+                self._json(409, {"ok": False, "error": "command_is_not_camera_request", "command_id": command_id}); return
+            if cmd.get("status") in ("completed", "failed", "expired"):
+                self._json(409, {"ok": False, "error": "camera_command_already_finished", "status": cmd.get("status"), "command_id": command_id}); return
+
+        length = int(self.headers.get("Content-Length", 0))
+        if length <= 0:
+            self._json(400, {"ok": False, "error": ERR_NO_IMAGE}); return
+        if length > MAX_UPLOAD_BYTES:
+            self._json(413, {"ok": False, "error": ERR_TOO_LARGE}); return
+        data = self.rfile.read(length)
+        if len(data) < 100:
+            self._json(400, {"ok": False, "error": ERR_NO_IMAGE}); return
+
+        lens = (self.headers.get("X-Camera-Lens") or "unknown").strip().lower()
+        if lens not in ("front", "back"): lens = "unknown"
+        ext = ".png" if data[:8] == b"\x89PNG\r\n\x1a\n" else ".jpg"
+        dest = self.state.camera_dir / f"camera_{int(time.time() * 1000)}_{safe_command_id}{ext}"
+        dest.write_bytes(data)
+
+        photos = sorted(self.state.camera_dir.glob("camera_*"), key=lambda p: p.stat().st_mtime)
+        old_list = photos[:-self.state.camera_keep] if self.state.camera_keep > 0 else photos[:-1]
+        for old in old_list:
+            try: old.unlink()
+            except OSError: pass
+
+        completed_cmd = None
+        with self.state.commands_lock:
+            cmd = self.state.command_history.get(command_id)
+            if cmd is not None and cmd.get("action") == "camera_photo":
+                stamp = now_iso()
+                cmd["status"] = "completed"
+                cmd["execution_completed_at"] = stamp
+                cmd["result_uploaded_at"] = stamp
+                cmd["completed_at"] = stamp
+                cmd["camera_filename"] = dest.name
+                cmd["camera_lens"] = lens
+                cmd["result"] = json.dumps({
+                    "camera_filename": dest.name,
+                    "camera_lens": lens,
+                    "size": len(data),
+                    "command_id": command_id,
+                    "user_approved": True,
+                }, ensure_ascii=False)
+                self.state.command_history[command_id] = dict(cmd)
+                self.state.commands = [item for item in self.state.commands if item.get("id") != command_id]
+                completed_cmd = dict(cmd)
+
+        if completed_cmd is not None:
+            try:
+                self.state.add_activity_event({
+                    "id": completed_cmd.get("activity_event_id") or command_id,
+                    "device_id": completed_cmd.get("device_id") or DEFAULT_DEVICE,
+                    "source": "companion",
+                    "type": "camera",
+                    "action": "camera_photo",
+                    "status": "completed",
+                    "metadata_json": {
+                        "command_id": command_id,
+                        "camera_filename": dest.name,
+                        "camera_lens": lens,
+                        "size": len(data),
+                        "user_approved": True,
+                    }
+                })
+            except Exception:
+                pass
+
+        self._json(200, {
+            "ok": True,
+            "filename": dest.name,
+            "size": len(data),
+            "camera_lens": lens,
+            "command_id": command_id,
+            "user_approved": True,
+        })
 
 
 def main() -> None:
