@@ -41,7 +41,9 @@ import java.util.Locale;
 public class CompanionService extends Service {
     private static final String CHANNEL_ID = "linjian_peek_service";
     private static final String REMINDER_CHANNEL_ID = "linjian_peek_heads_up_v3";
+    private static final String CAMERA_REQUEST_CHANNEL_ID = "linjian_camera_request_v1";
     private static final int NOTIFICATION_ID = 20260715;
+    private static final int CAMERA_NOTIFICATION_BASE = 20261122;
     private static final int HOME_MODE_NOTIFICATION_ID = 20260913;
     private static volatile boolean running = false;
     private static volatile long lastPollHeartbeatMs = 0L;
@@ -242,6 +244,25 @@ public class CompanionService extends Service {
                 } else {
                     reportCommandStatus(ctx, serverUrl, token, id, "capturing", true, "screenshot_capture_started");
                     screenshotService.doScreenshot(serverUrl, token, id);
+                }
+                return;
+            }
+            if ("camera_photo".equals(action)) {
+                String cameraLens = cmd.optString("camera", cmd.optString("lens", "front")).trim().toLowerCase(Locale.ROOT);
+                if (!"back".equals(cameraLens) && !"rear".equals(cameraLens)) cameraLens = "front";
+                else cameraLens = "back";
+
+                String pendingKey = "camera_pending_" + id;
+                SharedPreferences cameraPrefs = ctx.getSharedPreferences(AppPrefs.PREFS, Context.MODE_PRIVATE);
+                if (!cameraPrefs.getBoolean(pendingKey, false)) {
+                    cameraPrefs.edit().putBoolean(pendingKey, true).apply();
+                    reportCommandStatus(ctx, serverUrl, token, id, "execution_started", true, "camera_request_waiting_for_user");
+                    if (!showCameraRequestNotification(ctx, serverUrl, token, id, cameraLens)) {
+                        cameraPrefs.edit().remove(pendingKey).apply();
+                        reportCommandOutcome(ctx, serverUrl, token, id, false, "camera_request_notification_unavailable");
+                    }
+                } else {
+                    DebugState.append(ctx, "相机请求已在等待用户确认，不重复弹通知：" + id);
                 }
                 return;
             }
@@ -823,7 +844,84 @@ public class CompanionService extends Service {
         return new String(bos.toByteArray(), "UTF-8");
     }
 
-    private void createNotificationChannel() { if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) { NotificationManager nm = getSystemService(NotificationManager.class); NotificationChannel channel = new NotificationChannel(CHANNEL_ID, "掌心窗", NotificationManager.IMPORTANCE_LOW); channel.setDescription("掌心窗正在等待你授权的截图与手机动作请求"); nm.createNotificationChannel(channel); NotificationChannel reminder = new NotificationChannel(REMINDER_CHANNEL_ID, "掌心窗悬浮横幅提醒", NotificationManager.IMPORTANCE_HIGH); reminder.setDescription("来自掌心窗的悬浮横幅、生活提醒与回家模式"); reminder.setLockscreenVisibility(Notification.VISIBILITY_PUBLIC); reminder.enableVibration(true); nm.createNotificationChannel(reminder); } }
+    private static boolean showCameraRequestNotification(Context ctx, String serverUrl, String token, String commandId, String cameraLens) {
+        try {
+            NotificationManager nm = (NotificationManager) ctx.getSystemService(Context.NOTIFICATION_SERVICE);
+            if (nm == null) return false;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N && !nm.areNotificationsEnabled()) {
+                DebugState.append(ctx, "相机请求未弹出：掌心窗通知权限已关闭");
+                return false;
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                NotificationChannel cameraChannel = new NotificationChannel(
+                        CAMERA_REQUEST_CHANNEL_ID,
+                        "掌心窗相机请求",
+                        NotificationManager.IMPORTANCE_HIGH);
+                cameraChannel.setDescription("只有你主动点开并确认后，才会进入系统相机；照片预览后还需再次确认发送");
+                cameraChannel.setLockscreenVisibility(Notification.VISIBILITY_PRIVATE);
+                cameraChannel.enableVibration(true);
+                nm.createNotificationChannel(cameraChannel);
+            }
+
+            Intent intent = new Intent(ctx, CameraConsentActivity.class);
+            intent.putExtra("server_url", serverUrl);
+            intent.putExtra("token", token);
+            intent.putExtra("command_id", commandId);
+            intent.putExtra("camera_lens", cameraLens);
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+
+            int requestCode = 42000 + Math.abs((commandId == null ? 0 : commandId.hashCode()) % 10000);
+            PendingIntent open = PendingIntent.getActivity(
+                    ctx,
+                    requestCode,
+                    intent,
+                    PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+
+            String lensText = "back".equals(cameraLens) ? "后置" : "前置";
+            Notification.Builder builder = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
+                    ? new Notification.Builder(ctx, CAMERA_REQUEST_CHANNEL_ID)
+                    : new Notification.Builder(ctx);
+            builder.setSmallIcon(android.R.drawable.ic_menu_camera)
+                    .setContentTitle("Riven 想看一眼")
+                    .setContentText("点开后仍需你确认，再由你自己拍照和预览（" + lensText + "相机）")
+                    .setStyle(new Notification.BigTextStyle().bigText(
+                            "Riven 发来一次相机查看请求。点开后仍需你明确允许，再由你自己按快门；拍完会先预览，只有你点“发送给 Riven”才会上传。"))
+                    .setContentIntent(open)
+                    .setAutoCancel(true)
+                    .setVisibility(Notification.VISIBILITY_PRIVATE)
+                    .setPriority(Notification.PRIORITY_HIGH)
+                    .setCategory(Notification.CATEGORY_MESSAGE);
+            int notificationId = CAMERA_NOTIFICATION_BASE + Math.abs((commandId == null ? 0 : commandId.hashCode()) % 10000);
+            nm.notify(notificationId, builder.build());
+            DebugState.append(ctx, "相机请求通知已发出：" + commandId + " lens=" + cameraLens);
+            return true;
+        } catch (Exception e) {
+            DebugState.append(ctx, "相机请求通知失败：" + ScreenshotService.shortMsg(e));
+            return false;
+        }
+    }
+
+    private void createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            NotificationManager nm = getSystemService(NotificationManager.class);
+            if (nm == null) return;
+            NotificationChannel channel = new NotificationChannel(CHANNEL_ID, "掌心窗", NotificationManager.IMPORTANCE_LOW);
+            channel.setDescription("掌心窗正在等待你授权的截图与手机动作请求");
+            nm.createNotificationChannel(channel);
+
+            NotificationChannel reminder = new NotificationChannel(REMINDER_CHANNEL_ID, "掌心窗悬浮横幅提醒", NotificationManager.IMPORTANCE_HIGH);
+            reminder.setDescription("来自掌心窗的悬浮横幅、生活提醒与回家模式");
+            reminder.setLockscreenVisibility(Notification.VISIBILITY_PUBLIC);
+            reminder.enableVibration(true);
+            nm.createNotificationChannel(reminder);
+
+            NotificationChannel cameraChannel = new NotificationChannel(CAMERA_REQUEST_CHANNEL_ID, "掌心窗相机请求", NotificationManager.IMPORTANCE_HIGH);
+            cameraChannel.setDescription("相机只会在你点开请求并确认后启动，照片预览后还需再次确认发送");
+            cameraChannel.setLockscreenVisibility(Notification.VISIBILITY_PRIVATE);
+            cameraChannel.enableVibration(true);
+            nm.createNotificationChannel(cameraChannel);
+        }
+    }
     private Notification buildNotification(String text) { Notification.Builder builder = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O ? new Notification.Builder(this, CHANNEL_ID) : new Notification.Builder(this); return builder.setContentTitle("掌心窗运行中").setContentText(text).setSmallIcon(android.R.drawable.ic_menu_view).setOngoing(true).build(); }
     @Override public void onDestroy() {
         running = false;
