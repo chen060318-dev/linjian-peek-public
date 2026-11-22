@@ -2365,7 +2365,7 @@ function makeServer({ allowedToolNames = null, principal = {} } = {}) {
       if (observed?.status === "completed" && observed?.camera_filename) {
         const img = await fetchCameraImage(commandId);
         return contentResult([
-          { type: "text", text: \`梨梨已经亲自确认并发送了这张照片（\${observed.camera_lens || camera} 相机）。\` },
+          { type: "text", text: `梨梨已经亲自确认并发送了这张照片（${observed.camera_lens || camera} 相机）。` },
           { type: "image", data: img.data, mimeType: img.mimeType }
         ], false, {
           ok: true,
@@ -2381,13 +2381,13 @@ function makeServer({ allowedToolNames = null, principal = {} } = {}) {
       if (["failed", "expired"].includes(observed?.status)) {
         return contentResult([{
           type: "text",
-          text: \`本次相机请求\${observed.status === "expired" ? "已过期" : "没有完成"}：\${observed.result || "用户没有发送照片"}。\`
+          text: `本次相机请求${observed.status === "expired" ? "已过期" : "没有完成"}：${observed.result || "用户没有发送照片"}。`
         }], true, { ok: false, command_id: commandId, observed_status: observed });
       }
 
       return contentResult([{
         type: "text",
-        text: \`相机请求已经送到梨梨手机，command_id=\${commandId}。现在只是在等待她本人点开通知并确认；摄像头尚未被远程打开，也没有任何照片上传。她发送后，用 get_camera_photo 读取这一次请求的照片。\`
+        text: `相机请求已经送到梨梨手机，command_id=${commandId}。现在只是在等待她本人点开通知并确认；摄像头尚未被远程打开，也没有任何照片上传。她发送后，用 get_camera_photo 读取这一次请求的照片。`
       }], false, {
         ok: true,
         waiting_user_confirmation: true,
@@ -2419,7 +2419,7 @@ function makeServer({ allowedToolNames = null, principal = {} } = {}) {
       if (observed.status === "completed" && observed.camera_filename) {
         const img = await fetchCameraImage(command_id);
         return contentResult([
-          { type: "text", text: \`梨梨已经确认发送：\${observed.camera_filename}。\` },
+          { type: "text", text: `梨梨已经确认发送：${observed.camera_filename}。` },
           { type: "image", data: img.data, mimeType: img.mimeType }
         ], false, {
           ok: true,
@@ -2435,7 +2435,7 @@ function makeServer({ allowedToolNames = null, principal = {} } = {}) {
       if (["failed", "expired"].includes(observed.status)) {
         return contentResult([{
           type: "text",
-          text: \`这次相机请求\${observed.status === "expired" ? "已过期" : "已取消/失败"}：\${observed.result || "没有照片被发送"}。\`
+          text: `这次相机请求${observed.status === "expired" ? "已过期" : "已取消/失败"}：${observed.result || "没有照片被发送"}。`
         }], true, { ok: false, command_id, observed_status: observed });
       }
 
