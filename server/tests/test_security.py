@@ -97,6 +97,62 @@ class PhoneBackendSecurityTest(unittest.TestCase):
         with urlopen(Request(self.base + f"/api/screenshot?id={command_id}", headers=auth), timeout=3) as response:
             self.assertEqual(response.read(), image)
 
+    def test_camera_upload_is_command_scoped_and_never_becomes_latest_screen(self):
+        auth = {"X-Auth-Token": "test-phone-sync-token"}
+        before_status, before_latest = self.status("/api/latest.json", auth)
+        before_filename = before_latest.get("filename") if isinstance(before_latest, dict) else None
+
+        _, queued = self.post_json("/api/command", {
+            "device_id": "camera-test-phone",
+            "action": "camera_photo",
+            "camera": "front",
+            "ttl_seconds": 90,
+        }, auth)
+        command_id = queued["command"]["id"]
+
+        # Until the user actually approves and uploads, the exact camera result does not exist.
+        pending_status, _ = self.status(f"/api/camera?id={command_id}", auth)
+        self.assertEqual(pending_status, 404)
+
+        _, polled = self.status("/api/poll?device_id=camera-test-phone", auth)
+        self.assertEqual(polled["command"]["id"], command_id)
+        self.assertEqual(polled["command"]["action"], "camera_photo")
+
+        image = b"\xff\xd8" + (b"approved-camera-image" * 20)
+        upload_headers = {
+            **auth,
+            "Content-Type": "image/jpeg",
+            "X-Command-Id": command_id,
+            "X-Camera-Lens": "front",
+        }
+        request = Request(self.base + "/api/camera", data=image, headers=upload_headers, method="POST")
+        with urlopen(request, timeout=3) as response:
+            uploaded = json.loads(response.read().decode("utf-8"))
+
+        self.assertEqual(uploaded["command_id"], command_id)
+        self.assertTrue(uploaded["user_approved"])
+        self.assertEqual(uploaded["camera_lens"], "front")
+
+        _, command_status = self.status(f"/api/command/status?id={command_id}", auth)
+        command = command_status["command"]
+        self.assertEqual(command["status"], "completed")
+        self.assertEqual(command["camera_filename"], uploaded["filename"])
+
+        with urlopen(Request(self.base + f"/api/camera?id={command_id}", headers=auth), timeout=3) as response:
+            self.assertEqual(response.read(), image)
+
+        # A camera photo must never silently replace the screen-screenshot "latest" endpoint.
+        after_status, after_latest = self.status("/api/latest.json", auth)
+        after_filename = after_latest.get("filename") if isinstance(after_latest, dict) else None
+        self.assertEqual((after_status, after_filename), (before_status, before_filename))
+
+        # Reusing the already-completed command is rejected, so one approval cannot become
+        # an unlimited upload channel.
+        retry = Request(self.base + "/api/camera", data=image, headers=upload_headers, method="POST")
+        with self.assertRaises(HTTPError) as cm:
+            urlopen(retry, timeout=3)
+        self.assertEqual(cm.exception.code, 409)
+
     def test_received_command_is_not_redispatched_and_terminal_report_removes_it(self):
         auth = {"X-Auth-Token": "test-phone-sync-token"}
         _, queued = self.post_json("/api/command", {"device_id": "android-phone", "action": "get_screen_break_state"}, auth)

@@ -928,6 +928,14 @@ async function fetchCommandImage(commandId) {
   return { mimeType, data: buf.toString("base64"), bytes: buf.byteLength };
 }
 
+async function fetchCameraImage(commandId) {
+  const res = await linjianFetch(`/api/camera?id=${encodeURIComponent(commandId)}`);
+  const mimeType = res.headers.get("content-type")?.split(";")[0] || "image/jpeg";
+  const ab = await res.arrayBuffer();
+  const buf = Buffer.from(ab);
+  return { mimeType, data: buf.toString("base64"), bytes: buf.byteLength };
+}
+
 
 async function getCachedWalletState(device_id = DEFAULT_DEVICE) {
   const res = await linjianFetch(`/api/device/state?device_id=${encodeURIComponent(device_id)}`, { timeout_ms: QUICK_FETCH_TIMEOUT_MS });
@@ -1157,7 +1165,7 @@ function makeWalletTakeoutServer() {
 }
 
 function makeTakeoutServer() {
-  const server = new McpServer({ name: "梨梨外卖", version: "0.3.10.0" });
+  const server = new McpServer({ name: "梨梨外卖", version: "0.3.10.1" });
   const originalTool = server.tool.bind(server);
   server.tool = (...args) => {
     const toolName = String(args[0] || "");
@@ -1172,7 +1180,7 @@ function makeTakeoutServer() {
     return textResult({
       ok: true,
       schema_mode: "takeout_only",
-      version: "0.3.10.0",
+      version: "0.3.10.1",
       has_url: Boolean(LINJIAN_URL_CANDIDATES.length),
       has_token: Boolean(LINJIAN_TOKEN),
       linjian_url: effectiveLinjianUrl(),
@@ -1205,7 +1213,7 @@ const COMPANION_ALLOWED_TOOLS = new Set([
   "get_last_visit", "get_visit_history", "get_visit_stats", "record_visit",
   "get_weather_state", "send_weather_notification", "get_senses_state", "get_life_state",
   "send_notification", "set_alarm",
-  "peek_screen", "latest_screen", "linjian_status",
+  "peek_screen", "latest_screen", "request_camera_photo", "get_camera_photo", "linjian_status",
   "get_screen_break_state", "screen_break_app", "temporary_screen_break_release",
   "end_screen_break", "extend_screen_break", "deny_screen_break_release_request",
   "list_screen_break_apps", "list_lockable_apps",
@@ -1237,9 +1245,9 @@ const WECHAT_ALLOWED_TOOLS = new Set([
 
 
 function makeServer({ allowedToolNames = null, principal = {} } = {}) {
-  const server = new McpServer({ name: "掌心窗", version: "0.3.10.0-readingbridge" });
+  const server = new McpServer({ name: "掌心窗", version: "0.3.10.1-camera-consent" });
   const commandBackedTools = new Set([
-    "peek_screen", "get_screen_nodes", "tap_text", "input_text", "draft_xhs_comment", "xhs_comment", "send_visible_comment_after_confirmation",
+    "peek_screen", "request_camera_photo", "get_screen_nodes", "tap_text", "input_text", "draft_xhs_comment", "xhs_comment", "send_visible_comment_after_confirmation",
     "douyin_open_messages", "douyin_open_chat", "douyin_check_streak", "douyin_draft_message", "douyin_send_message", "douyin_list_publish_media", "douyin_prepare_post", "douyin_publish_current_post",
     "wechat_visual_nav", "wechat_quick_send_current", "wechat_scroll_current_chat", "wechat_tap_current_screen", "wechat_open_sticker_category", "wechat_scroll_sticker_categories", "wechat_send_sticker_current", "wechat_list_background_inbox", "wechat_reply_background_event",
     "add_guardian_calendar_event", "care_action", "trigger_guidian", "mark_guidian_returned",
@@ -2328,6 +2336,118 @@ function makeServer({ allowedToolNames = null, principal = {} } = {}) {
         }
       }
       return contentResult([{ type: "text", text: `等待 ${wait_seconds} 秒后本次截图仍未完成，command_id=${commandId}，当前状态=${observed?.status || "pending"}。该请求会保留，可据此继续查询；不会拿旧截图冒充本次结果。` }], true, { ok: false, error: "screenshot_timeout", command_id: commandId, observed_status: observed });
+    }
+  );
+
+  server.tool("request_camera_photo",
+    "向掌心窗发起一次相机查看请求。仅当用户明确说想让我看、让我看看她/某个东西，或明确同意本次相机查看时才可调用；不得主动窥视。远程调用只会发送一条手机通知，不会自动打开摄像头。用户必须亲自点开通知、允许、按快门、预览，并再次点“发送给 Riven”后，图片才会回传。",
+    {
+      camera: z.enum(["front", "back"]).default("front").describe("希望使用前置或后置相机；只是启动偏好，用户可在系统相机中自行切换。"),
+      wait_seconds: z.number().int().min(0).max(12).default(5).describe("短暂等待用户完成拍照的秒数；没完成会返回 command_id，之后用 get_camera_photo 查询。")
+    },
+    async ({ camera = "front", wait_seconds = 5 }) => {
+      const queued = await postCommand({
+        action: "camera_photo",
+        device_id: DEFAULT_DEVICE,
+        payload: { camera, ttl_seconds: 600 }
+      });
+      const commandId = queued?.command?.id;
+      if (!commandId) {
+        return contentResult([{ type: "text", text: "相机请求创建失败：服务器没有返回 command_id。" }], true);
+      }
+
+      let observed = queued?.command || null;
+      if (wait_seconds > 0) {
+        const status = await waitCommand(commandId, wait_seconds).catch(() => null);
+        observed = status?.command || observed;
+      }
+
+      if (observed?.status === "completed" && observed?.camera_filename) {
+        const img = await fetchCameraImage(commandId);
+        return contentResult([
+          { type: "text", text: `梨梨已经亲自确认并发送了这张照片（${observed.camera_lens || camera} 相机）。` },
+          { type: "image", data: img.data, mimeType: img.mimeType }
+        ], false, {
+          ok: true,
+          user_approved: true,
+          command_id: commandId,
+          filename: observed.camera_filename,
+          camera_lens: observed.camera_lens || camera,
+          size: img.bytes,
+          source: "request_camera_photo"
+        });
+      }
+
+      if (["failed", "expired"].includes(observed?.status)) {
+        return contentResult([{
+          type: "text",
+          text: `本次相机请求${observed.status === "expired" ? "已过期" : "没有完成"}：${observed.result || "用户没有发送照片"}。`
+        }], true, { ok: false, command_id: commandId, observed_status: observed });
+      }
+
+      return contentResult([{
+        type: "text",
+        text: `相机请求已经送到梨梨手机，command_id=${commandId}。现在只是在等待她本人点开通知并确认；摄像头尚未被远程打开，也没有任何照片上传。她发送后，用 get_camera_photo 读取这一次请求的照片。`
+      }], false, {
+        ok: true,
+        waiting_user_confirmation: true,
+        command_id: commandId,
+        camera,
+        observed_status: observed
+      });
+    }
+  );
+
+  server.tool("get_camera_photo",
+    "读取某一次 request_camera_photo 的结果。只能按该请求返回的 command_id 读取；不会读取“最近一张”或拿旧照片替代。如果用户还没发送，就只返回等待状态。",
+    {
+      command_id: z.string().min(8).max(120),
+      wait_seconds: z.number().int().min(0).max(12).default(3)
+    },
+    async ({ command_id, wait_seconds = 3 }) => {
+      let statusResult = await commandStatus(command_id).catch(() => null);
+      let observed = statusResult?.command || null;
+      if (wait_seconds > 0 && observed && !["completed", "failed", "expired"].includes(observed.status)) {
+        const waited = await waitCommand(command_id, wait_seconds).catch(() => null);
+        observed = waited?.command || observed;
+      }
+
+      if (!observed) {
+        return contentResult([{ type: "text", text: "没有找到这次相机请求。" }], true, { ok: false, command_id, error: "camera_command_not_found" });
+      }
+
+      if (observed.status === "completed" && observed.camera_filename) {
+        const img = await fetchCameraImage(command_id);
+        return contentResult([
+          { type: "text", text: `梨梨已经确认发送：${observed.camera_filename}。` },
+          { type: "image", data: img.data, mimeType: img.mimeType }
+        ], false, {
+          ok: true,
+          user_approved: true,
+          command_id,
+          filename: observed.camera_filename,
+          camera_lens: observed.camera_lens || "unknown",
+          size: img.bytes,
+          source: "get_camera_photo"
+        });
+      }
+
+      if (["failed", "expired"].includes(observed.status)) {
+        return contentResult([{
+          type: "text",
+          text: `这次相机请求${observed.status === "expired" ? "已过期" : "已取消/失败"}：${observed.result || "没有照片被发送"}。`
+        }], true, { ok: false, command_id, observed_status: observed });
+      }
+
+      return contentResult([{
+        type: "text",
+        text: "这次请求还在等待梨梨本人确认或发送，当前没有照片可看。"
+      }], false, {
+        ok: true,
+        waiting_user_confirmation: true,
+        command_id,
+        observed_status: observed
+      });
     }
   );
 
