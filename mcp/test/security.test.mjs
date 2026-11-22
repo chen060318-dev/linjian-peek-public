@@ -158,7 +158,7 @@ test("valid read token only exposes the read-only tool set", async () => {
   assert.match(body, /get_phone_state/);
   assert.match(body, /get_app_usage/);
   assert.match(body, /get_profile/);
-  assert.doesNotMatch(body, /send_phone_command|take_screenshot|input_text|open_app/);
+  assert.doesNotMatch(body, /send_phone_command|take_screenshot|input_text|open_app|request_camera_photo|get_camera_photo/);
 });
 
 test("wallet and control surface remains disabled with valid control scope", async () => {
@@ -194,7 +194,8 @@ test("dedicated takeout endpoint exposes only takeout tools with companion contr
   }
   for (const disabled of [
     "wallet_takeout_action", "get_wallet_state", "delete_wallet_record",
-    "tap_text", "input_text", "send_phone_command", "open_app"
+    "tap_text", "input_text", "send_phone_command", "open_app",
+    "request_camera_photo", "get_camera_photo"
   ]) {
     assert.doesNotMatch(body, new RegExp(`"name":"${disabled}"`), `unexpected ${disabled}`);
   }
@@ -218,7 +219,8 @@ test("scoped control token exposes companion diary and wallet but not phone cont
     "get_profile", "write_diary_entry", "get_companion_actions",
     "list_wallet_approvals", "decide_wallet_approval", "get_guardian_calendar",
     "peek_screen", "latest_screen", "screen_break_app", "get_screen_break_state",
-    "send_notification", "send_weather_notification", "set_guidian_config", "set_alarm"
+    "send_notification", "send_weather_notification", "set_guidian_config", "set_alarm",
+    "request_camera_photo", "get_camera_photo"
   ]) {
     assert.match(body, new RegExp(enabled), `expected ${enabled}`);
   }
